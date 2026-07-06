@@ -16,6 +16,9 @@
     "watch": "tsc -w",
     "test": "vitest run",
     "test:watch": "vitest",
+    "import:master": "ts-node scripts/import-master.ts",
+    "import:feedback": "ts-node scripts/import-feedback.ts",
+    "del-sheet": "ts-node scripts/make-del-sheet.ts",
     "verify": "ts-node scripts/verify-setup.ts",
     "verify:enhanced": "ts-node scripts/setup-enhanced.ts",
     "test:ollama": "ts-node scripts/test-ollama.ts",
@@ -34,6 +37,7 @@
     "@hapi/boom": "^10.0.1",
     "@types/express": "^5.0.6",
     "@whiskeysockets/baileys": "^6.7.21",
+    "better-sqlite3": "^12.11.1",
     "body-parser": "^2.2.1",
     "dotenv": "^16.4.1",
     "express": "^5.2.1",
@@ -50,6 +54,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.5",
     "@types/node-cron": "^3.0.11",
     "@types/node-fetch": "^2.6.11",

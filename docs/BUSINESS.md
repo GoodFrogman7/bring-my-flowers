@@ -69,6 +69,26 @@ So, in priority order:
 3. **Delivery sheet generation** — due-customer filter, last-5 lookup, flower assignment (cheapest available, no repeats, restrictions), procurement TO BUY.
 4. **Route building** per zone.
 
+## Phase A implementation (done)
+
+The datastore + import/export pipeline lives in `src/business/`:
+
+- `db.ts` — SQLite schema: customers → subscriptions → cycles → deliveries,
+  one_time_orders, restrictions, delivery_log (what actually shipped, from the
+  feedback sheets), flowers + price history.
+- `importMaster.ts` — `npm run import:master <Master.xlsx>`; tolerant of the
+  real data (serial dates, `//` phone lists, status typos, biweekly date-pair
+  encoding where each planned/changed pair holds TWO deliveries).
+- `importFeedback.ts` — `npm run import:feedback <Feedback.xlsx>`; one tab per
+  date, columns located by header, populates delivery_log.
+- `delSheet.ts` — `npm run del-sheet <YYYY-MM-DD>`; regenerates the daily
+  delivery sheet in the owner's exact 30-column format, including the
+  last-5-flowers lookback (byte-identical to his VLOOKUP output in shadow
+  testing). Flower 1-3 assignment stays manual until Phase C.
+
+Shadow-tested against the real 06-July sheet: 72/77 rows reproduced; the
+misses are bouquets/subscribers created after the April Master snapshot.
+
 ## Constraints to respect
 
 - The team (Pooja, Sanjay, 5 delivery boys) lives in these sheets. Any system must keep

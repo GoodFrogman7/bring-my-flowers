@@ -24,3 +24,5 @@ desktop.ini
 
 # Build artifacts
 *.tsbuildinfo
+*.db
+*.db-*
