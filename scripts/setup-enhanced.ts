@@ -92,8 +92,8 @@ async function verifyEnhancedSetup() {
   }
 
   // 4. Check build
-  const distPath = path.join(process.cwd(), 'dist', 'index-enhanced.js');
-  const isBuilt = check(fs.existsSync(distPath), 'Project is built (dist/index-enhanced.js exists)');
+  const distPath = path.join(process.cwd(), 'dist', 'index.js');
+  const isBuilt = check(fs.existsSync(distPath), 'Project is built (dist/index.js exists)');
   if (!isBuilt) {
     console.log(`  ${colors.yellow}→ Run: npm run build${colors.reset}`);
   }

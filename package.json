@@ -5,13 +5,17 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
-    "start:twilio": "node dist/index-twilio.js",
-    "start:enhanced": "node dist/index-enhanced.js",
+    "start:baileys": "node dist/index.js baileys",
+    "start:twilio": "node dist/index.js twilio",
+    "start:enhanced": "node dist/index.js enhanced",
     "dev": "ts-node src/index.ts",
-    "dev:twilio": "ts-node src/index-twilio.ts",
-    "dev:enhanced": "ts-node src/index-enhanced.ts",
+    "dev:baileys": "ts-node src/index.ts baileys",
+    "dev:twilio": "ts-node src/index.ts twilio",
+    "dev:enhanced": "ts-node src/index.ts enhanced",
     "build": "tsc",
     "watch": "tsc -w",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "verify": "ts-node scripts/verify-setup.ts",
     "verify:enhanced": "ts-node scripts/setup-enhanced.ts",
     "test:ollama": "ts-node scripts/test-ollama.ts",
@@ -51,7 +55,8 @@
     "@types/node-fetch": "^2.6.11",
     "@types/qrcode-terminal": "^0.12.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.9"
   },
   "engines": {
     "node": ">=18.0.0"
