@@ -1,0 +1,33 @@
+# Bring My Flowers - WhatsApp Chatbot
+
+## Project Overview
+Automated WhatsApp chatbot for flower delivery business that handles customer messages, manages orders/inventory, notifies delivery personnel, and generates daily business summaries.
+
+## Tech Stack
+- Runtime: Node.js + TypeScript
+- WhatsApp: Baileys (unofficial WhatsApp Web API)
+- LLM: Ollama (local) with llama3/mistral
+- Storage: Excel files via xlsx
+- Scheduling: node-cron
+
+## Key Components
+1. WhatsApp Bot (src/bot/whatsapp.ts)
+2. Ollama Client (src/llm/ollama.ts)
+3. Excel Manager (src/data/excelManager.ts)
+4. Message Handler (src/handlers/messageHandler.ts)
+5. Delivery Notifier (src/notifications/deliveryNotifier.ts)
+6. Daily Summary Generator (src/summary/dailySummary.ts)
+
+## Development Guidelines
+- Always use TypeScript with strict types
+- Log all actions using pino logger
+- Backup Excel before writes
+- Handle errors gracefully with user-friendly messages
+- Rate limit customer messages
+- Use proper file locking for Excel operations
+
+## Testing
+- npm run test:ollama - Test Ollama connection
+- npm run add:sample - Add sample data
+- npm run dev - Run in development mode
+
