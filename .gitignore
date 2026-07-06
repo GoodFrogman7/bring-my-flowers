@@ -6,6 +6,7 @@ data/*.xlsx
 *.log
 logs/
 .env
+google-credentials.json
 *.bak
 *.tmp
 
