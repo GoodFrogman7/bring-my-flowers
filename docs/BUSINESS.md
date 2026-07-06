@@ -41,6 +41,29 @@ Collect (₹ to collect), cycles pending, debit-credit (under/over payment), pay
 **Extra Instruction** (next-delivery-specific), then the cycle's delivery dates (weekly: +7 days
 × 4 with a changed-date column each; biweekly: 8 date slots).
 
+## Pack composition (official card, docs/assets/pack-card.jpeg)
+
+All plans: 4 weeks, one delivery per week. **Deliveries alternate between a
+SEASONAL week and a PREMIUM week** — this alternation plus "never repeat the
+last 5" plus per-customer restrictions is the flower-assignment rulebook.
+
+| Pack | Price | Seasonal week | Premium week |
+|------|-------|---------------|--------------|
+| Bliss | ₹1450 | 16 stems | Asiatic Lily/Sunflower ×3 · Spray Daisy/Orchid ×5 |
+| Joy | ₹1950 | 22 stems | Asiatic Lily/Sunflower/Eustoma/BOP ×4 · Spray Daisy/Orchid ×7 |
+| Elation | ₹2750 | 32 stems | Asiatic/Sunflower/Eustoma/BOP ×6 · Spray Daisy/Orchid ×10 |
+| Enchantment | ₹4750 | 60 stems | Asiatic/Sunflower/Eustoma/BOP ×11 · Anthurium/Heliconia ×6 · Oriental Lily ×5 · Spray Daisy/Orchid ×18 |
+
+**Flower classes** — SEASONAL: Rose, Carnation, Guldawari, Gladioli, Tuberose
+(Rajni), Gerbera, "and more". PREMIUM: Asiatic Lily, Sunflower, Eustoma, BOP,
+Spray Daisy, Orchid, Anthurium, Heliconia, Oriental Lily.
+
+Card covers the flagship packs only; Delight ₹999, Bloom ₹1600 (biweekly),
+Felicity ₹2300, Charm ₹3000 etc. exist in the Master — get their recipes from
+the owner. Brand promises (docs/assets/brand-flyer.jpeg): 48-hour replacement
+policy; skip/hold anytime with one day's notice; customization by phone
+(+91 9717173327, bringmyflowers.com).
+
 ## Daily operating loop
 
 1. **Customer messages** arrive on the customer-care phone (staffed by Pooja). Operational instructions are forwarded to a WhatsApp group with the manager (Sanjay) — "hold these customers today."

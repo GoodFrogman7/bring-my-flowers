@@ -120,7 +120,8 @@ CREATE TABLE IF NOT EXISTS flowers (
   name TEXT PRIMARY KEY,
   sticks_per_bunch INTEGER NOT NULL DEFAULT 10,
   cost_per_bunch REAL NOT NULL DEFAULT 0,
-  wastage REAL NOT NULL DEFAULT 0.1
+  wastage REAL NOT NULL DEFAULT 0.1,
+  class TEXT NOT NULL DEFAULT 'SEASONAL'  -- SEASONAL | PREMIUM (pack card)
 );
 
 CREATE TABLE IF NOT EXISTS flower_price_history (
@@ -131,6 +132,12 @@ CREATE TABLE IF NOT EXISTS flower_price_history (
 );
 `;
 
+/** Additive migrations for databases created before a column existed. */
+const MIGRATIONS = [
+  // SEASONAL | PREMIUM — from the official pack card (docs/assets/pack-card.jpeg)
+  `ALTER TABLE flowers ADD COLUMN class TEXT NOT NULL DEFAULT 'SEASONAL'`
+];
+
 export function openDb(filePath: string): Database.Database {
   if (filePath !== ':memory:') {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -139,6 +146,13 @@ export function openDb(filePath: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  for (const migration of MIGRATIONS) {
+    try {
+      db.exec(migration);
+    } catch {
+      // column already exists
+    }
+  }
   return db;
 }
 
