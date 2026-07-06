@@ -17,6 +17,8 @@
   },
   "scheduler": {
     "summaryTime": "22:00",
+    "recurringTime": "07:00",
+    "reminderTime": "08:30",
     "timezone": "Asia/Kolkata"
   },
   "messaging": {

@@ -3,8 +3,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as lockfile from 'proper-lockfile';
 import logger from '../utils/logger';
-import { Order, InventoryItem, Delivery, DailyLog, ACTIVE_ORDER_STATUSES } from '../types';
-import { DataStore } from './dataStore';
+import { Order, InventoryItem, Delivery, DailyLog, RecurringOrder, ACTIVE_ORDER_STATUSES } from '../types';
+import { DataStore, RecurringOrderUpdate } from './dataStore';
+import { samePhone } from '../utils/ids';
+
+const RECURRING_HEADERS = [
+  'recurring_id', 'customer_phone', 'customer_name', 'items', 'quantity',
+  'frequency', 'day', 'next_date', 'status', 'amount', 'language', 'created_date', 'notes'
+];
 
 export class ExcelManager implements DataStore {
   private filePath: string;
@@ -53,6 +59,10 @@ export class ExcelManager implements DataStore {
       ];
       const logsSheet = XLSX.utils.aoa_to_sheet(logsData);
       XLSX.utils.book_append_sheet(workbook, logsSheet, 'Daily_Logs');
+
+      // Recurring orders sheet
+      const recurringSheet = XLSX.utils.aoa_to_sheet([RECURRING_HEADERS]);
+      XLSX.utils.book_append_sheet(workbook, recurringSheet, 'Recurring_Orders');
 
       XLSX.writeFile(workbook, this.filePath);
       logger.info({ filePath: this.filePath }, 'Excel file initialized');
@@ -137,8 +147,17 @@ export class ExcelManager implements DataStore {
 
   async getTodayOrders(): Promise<Order[]> {
     const today = new Date().toISOString().split('T')[0];
+    return this.getOrdersByDate(today);
+  }
+
+  async getOrderById(orderId: string): Promise<Order | null> {
+    const orders = await this.getAllOrders();
+    return orders.find(o => o.order_id === orderId) || null;
+  }
+
+  async getOrdersByDate(date: string): Promise<Order[]> {
     const allOrders = await this.getAllOrders();
-    return allOrders.filter(order => order.date === today);
+    return allOrders.filter(order => order.date === date);
   }
 
   async getUpcomingOrderByCustomerPhone(phone: string): Promise<Order | null> {
@@ -260,6 +279,59 @@ export class ExcelManager implements DataStore {
       workbook.Sheets['Inventory'] = newSheet;
       this.writeWorkbook(workbook);
       logger.info({ item_name: item.item_name }, 'Inventory item added');
+    });
+  }
+
+  // Recurring orders CRUD. Workbooks created before this feature lack the
+  // sheet, so reads tolerate its absence and writes create it on demand.
+  private recurringSheet(workbook: XLSX.WorkBook): XLSX.WorkSheet {
+    if (!workbook.Sheets['Recurring_Orders']) {
+      const sheet = XLSX.utils.aoa_to_sheet([RECURRING_HEADERS]);
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Recurring_Orders');
+    }
+    return workbook.Sheets['Recurring_Orders'];
+  }
+
+  async getAllRecurringOrders(): Promise<RecurringOrder[]> {
+    return this.withFileLock(() => {
+      const workbook = this.readWorkbook();
+      const sheet = workbook.Sheets['Recurring_Orders'];
+      if (!sheet) return [];
+      return XLSX.utils.sheet_to_json<RecurringOrder>(sheet);
+    });
+  }
+
+  async getRecurringOrdersByCustomerPhone(phone: string): Promise<RecurringOrder[]> {
+    const all = await this.getAllRecurringOrders();
+    return all.filter(r => samePhone(r.customer_phone, phone));
+  }
+
+  async addRecurringOrder(recurring: RecurringOrder): Promise<void> {
+    return this.withLockedWrite(() => {
+      const workbook = this.readWorkbook();
+      const sheet = this.recurringSheet(workbook);
+      const data = XLSX.utils.sheet_to_json<RecurringOrder>(sheet);
+      data.push(recurring);
+      workbook.Sheets['Recurring_Orders'] = XLSX.utils.json_to_sheet(data, { header: RECURRING_HEADERS });
+      this.writeWorkbook(workbook);
+      logger.info({ recurring_id: recurring.recurring_id }, 'Recurring order added');
+    });
+  }
+
+  async updateRecurringOrder(recurringId: string, updates: RecurringOrderUpdate): Promise<void> {
+    return this.withLockedWrite(() => {
+      const workbook = this.readWorkbook();
+      const sheet = this.recurringSheet(workbook);
+      const data = XLSX.utils.sheet_to_json<RecurringOrder>(sheet);
+      const recurring = data.find(r => r.recurring_id === recurringId);
+      if (!recurring) {
+        logger.warn({ recurring_id: recurringId }, 'Recurring order not found');
+        return;
+      }
+      Object.assign(recurring, updates);
+      workbook.Sheets['Recurring_Orders'] = XLSX.utils.json_to_sheet(data, { header: RECURRING_HEADERS });
+      this.writeWorkbook(workbook);
+      logger.info({ recurring_id: recurringId, updates }, 'Recurring order updated');
     });
   }
 

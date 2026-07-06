@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { DataStore } from '../src/data/dataStore';
+import { DataStore, RecurringOrderUpdate } from '../src/data/dataStore';
 import { MessageSender } from '../src/bot/messageSender';
 import {
   Order,
@@ -7,6 +7,7 @@ import {
   Delivery,
   DailyLog,
   OrderStatus,
+  RecurringOrder,
   ACTIVE_ORDER_STATUSES,
   MessageIntent
 } from '../src/types';
@@ -17,9 +18,18 @@ export class InMemoryDataStore implements DataStore {
   inventory: InventoryItem[] = [];
   deliveries: Delivery[] = [];
   dailyLogs: DailyLog[] = [];
+  recurring: RecurringOrder[] = [];
 
   async getAllOrders(): Promise<Order[]> {
     return [...this.orders];
+  }
+
+  async getOrderById(orderId: string): Promise<Order | null> {
+    return this.orders.find(o => o.order_id === orderId) ?? null;
+  }
+
+  async getOrdersByDate(date: string): Promise<Order[]> {
+    return this.orders.filter(o => o.date === date);
   }
 
   async getUpcomingOrderByCustomerPhone(phone: string): Promise<Order | null> {
@@ -71,6 +81,24 @@ export class InMemoryDataStore implements DataStore {
       i => i.item_name.toLowerCase() === itemName.toLowerCase()
     );
     if (item) item.quantity += quantityChange;
+  }
+
+  async addRecurringOrder(recurringOrder: RecurringOrder): Promise<void> {
+    this.recurring.push(recurringOrder);
+  }
+
+  async getAllRecurringOrders(): Promise<RecurringOrder[]> {
+    return [...this.recurring];
+  }
+
+  async getRecurringOrdersByCustomerPhone(phone: string): Promise<RecurringOrder[]> {
+    const digits = (s: string) => s.replace(/\D/g, '');
+    return this.recurring.filter(r => digits(r.customer_phone) === digits(phone));
+  }
+
+  async updateRecurringOrder(recurringId: string, updates: RecurringOrderUpdate): Promise<void> {
+    const recurringOrder = this.recurring.find(r => r.recurring_id === recurringId);
+    if (recurringOrder) Object.assign(recurringOrder, updates);
   }
 
   async getDeliveryByOrderId(orderId: string): Promise<Delivery | null> {
@@ -160,6 +188,23 @@ export function order(overrides: Partial<Order> = {}): Order {
     items: 'Roses',
     quantity: 10,
     amount: 500,
+    ...overrides
+  };
+}
+
+export function recurring(overrides: Partial<RecurringOrder> = {}): RecurringOrder {
+  return {
+    recurring_id: 'REC-TEST-1',
+    customer_phone: '+919876543210',
+    customer_name: 'Customer',
+    items: 'Roses',
+    quantity: 10,
+    frequency: 'WEEKLY',
+    day: 1,
+    next_date: '2099-01-01',
+    status: 'ACTIVE',
+    amount: 500,
+    language: 'en',
     ...overrides
   };
 }

@@ -43,10 +43,24 @@ For Twilio and enhanced mode setup (Twilio sandbox, ngrok, Google Cloud, Razorpa
 ## What it handles
 
 - **Orders** — "I want 5 roses for tomorrow" starts a conversation that collects flower, quantity, and date across messages, fuzzy-matches against inventory, checks stock, and asks for confirmation. In enhanced mode the customer gets a Razorpay payment link (24h expiry; unpaid orders are cancelled and stock returned).
+- **Subscriptions** — "10 roses every Monday" creates a recurring order. Each morning the bot materializes due subscriptions into real orders (with a fresh payment link per cycle in enhanced mode), skipping and alerting owners when stock is short. Customers can pause, resume, or cancel by message.
 - **Cancellations** — "No delivery today" cancels the customer's upcoming order, returns stock, and notifies the delivery person.
 - **Reschedules** — "Deliver on Monday instead" moves the upcoming order.
 - **Inquiries** — "Do you have lilies?" answered from live inventory.
+- **Status notifications** — customers are told when their order goes out for delivery and when it arrives, plus a morning reminder on delivery day, in their own language.
 - **Daily summary** — revenue, costs, profit, and stock report sent to owners at the configured time.
+
+## Owner command channel
+
+Messages from `OWNER_NUMBERS` never enter the customer flow — they get a deterministic command channel instead (text `help` for the full list):
+
+```
+today · orders tomorrow · order ORD-…       order lookups
+out ORD-… · deliver ORD-… · cancel ORD-…    status changes (customer notified)
+stock · stock add Roses 50 · stock set …     inventory
+recurring · recurring pause|resume|cancel    subscriptions
+recurring run · summary                      run schedulers now
+```
 
 ## Project structure
 
@@ -57,7 +71,8 @@ src/
 ├── bot/                     # Transports: Baileys, Twilio (MessageSender contract)
 ├── llm/ollama.ts            # Classification, extraction, response generation
 ├── conversation/            # Multi-turn order session state
-├── handlers/                # Message routing, order fulfillment strategies
+├── handlers/                # Message routing, owner commands, fulfillment strategies
+├── scheduler/               # Recurring-order materialization + delivery reminders
 ├── data/                    # DataStore contract: ExcelManager, GoogleSheetsManager
 ├── payment/                 # Razorpay client (links, webhook signatures)
 ├── notifications/           # Delivery-person and customer notifications
@@ -87,7 +102,7 @@ More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) 
 
 ## Known limitations
 
-- One flower type per order (multi-item orders are planned).
+- One flower type per order or subscription (multi-item orders are planned).
 - Enhanced mode reserves stock when the payment link is created; the link's 24h expiry webhook returns it.
 - Google Sheets mode does not track per-delivery-person assignments (delivery methods are no-ops).
 

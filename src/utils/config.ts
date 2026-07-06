@@ -25,6 +25,8 @@ export function loadConfig(): Config {
   if (process.env.SUMMARY_TIME) {
     config.scheduler.summaryTime = process.env.SUMMARY_TIME;
   }
+  config.scheduler.recurringTime = process.env.RECURRING_TIME || config.scheduler.recurringTime || '07:00';
+  config.scheduler.reminderTime = process.env.REMINDER_TIME || config.scheduler.reminderTime || '08:30';
   if (process.env.SESSION_PATH) {
     config.whatsapp.sessionPath = process.env.SESSION_PATH;
   }

@@ -81,6 +81,62 @@ export const responses = {
     ar: "مرحبا بكم في برينغ ماي فلاورز. يرجى إخبارنا بطلبك بعد الصفارة.",
     hi: "ब्रिंग माई फ्लावर्स में आपका स्वागत है। बीप के बाद अपना ऑर्डर बताएं।",
     ur: "برنگ مائی فلاورز میں خوش آمدید۔ بیپ کے بعد اپنا آرڈر بتائیں۔"
+  },
+
+  out_for_delivery: {
+    en: "🚚 Your flowers are on the way!\nOrder {orderId} is out for delivery and will arrive today.",
+    ar: "🚚 زهورك في الطريق!\nالطلب {orderId} خرج للتوصيل وسيصل اليوم.",
+    hi: "🚚 आपके फूल रास्ते में हैं!\nऑर्डर {orderId} डिलीवरी के लिए निकल चुका है और आज पहुंचेगा।",
+    ur: "🚚 آپ کے پھول راستے میں ہیں!\nآرڈر {orderId} ڈیلیوری کے لیے نکل چکا ہے اور آج پہنچے گا۔"
+  },
+
+  delivered: {
+    en: "🌸 Order {orderId} has been delivered. Enjoy your flowers — thank you for choosing us!",
+    ar: "🌸 تم توصيل الطلب {orderId}. استمتع بزهورك — شكراً لاختيارك لنا!",
+    hi: "🌸 ऑर्डर {orderId} डिलीवर हो गया है। अपने फूलों का आनंद लें — हमें चुनने के लिए धन्यवाद!",
+    ur: "🌸 آرڈر {orderId} ڈیلیور ہو گیا ہے۔ اپنے پھولوں کا لطف اٹھائیں — ہمیں منتخب کرنے کا شکریہ!"
+  },
+
+  delivery_reminder: {
+    en: "🌸 Reminder: your flower delivery (order {orderId}) is scheduled for today. See you soon!",
+    ar: "🌸 تذكير: توصيل زهورك (الطلب {orderId}) مقرر اليوم. نراك قريباً!",
+    hi: "🌸 रिमाइंडर: आपकी फूलों की डिलीवरी (ऑर्डर {orderId}) आज निर्धारित है। जल्द मिलते हैं!",
+    ur: "🌸 یاد دہانی: آپ کے پھولوں کی ڈیلیوری (آرڈر {orderId}) آج مقرر ہے۔ جلد ملتے ہیں!"
+  },
+
+  recurring_created: {
+    en: "🔁 Subscription confirmed!\n{quantity} {items}, {schedule} — ₹{amount} per delivery.\nFirst delivery: {date}\n\nReply \"pause subscription\" or \"cancel subscription\" anytime.",
+    ar: "🔁 تم تأكيد الاشتراك!\n{quantity} {items}، {schedule} — ₹{amount} لكل توصيلة.\nأول توصيل: {date}\n\nأرسل \"إيقاف الاشتراك\" أو \"إلغاء الاشتراك\" في أي وقت.",
+    hi: "🔁 सब्सक्रिप्शन कन्फर्म!\n{quantity} {items}, {schedule} — ₹{amount} प्रति डिलीवरी।\nपहली डिलीवरी: {date}\n\nकभी भी \"pause subscription\" या \"cancel subscription\" लिखें।",
+    ur: "🔁 سبسکرپشن کنفرم!\n{quantity} {items}، {schedule} — ₹{amount} فی ڈیلیوری۔\nپہلی ڈیلیوری: {date}\n\nکسی بھی وقت \"pause subscription\" یا \"cancel subscription\" لکھیں۔"
+  },
+
+  recurring_paused: {
+    en: "⏸️ Your subscription {recurringId} is paused. Reply \"resume subscription\" whenever you want deliveries again.",
+    ar: "⏸️ تم إيقاف اشتراكك {recurringId} مؤقتاً. أرسل \"استئناف الاشتراك\" متى أردت استئناف التوصيل.",
+    hi: "⏸️ आपका सब्सक्रिप्शन {recurringId} रोक दिया गया है। दोबारा शुरू करने के लिए \"resume subscription\" लिखें।",
+    ur: "⏸️ آپ کی سبسکرپشن {recurringId} روک دی گئی ہے۔ دوبارہ شروع کرنے کے لیے \"resume subscription\" لکھیں۔"
+  },
+
+  recurring_resumed: {
+    en: "▶️ Your subscription {recurringId} is active again. Next delivery: {date}.",
+    ar: "▶️ اشتراكك {recurringId} نشط مرة أخرى. التوصيل القادم: {date}.",
+    hi: "▶️ आपका सब्सक्रिप्शन {recurringId} फिर से सक्रिय है। अगली डिलीवरी: {date}।",
+    ur: "▶️ آپ کی سبسکرپشن {recurringId} دوبارہ فعال ہے۔ اگلی ڈیلیوری: {date}۔"
+  },
+
+  recurring_cancelled: {
+    en: "🛑 Your subscription {recurringId} has been cancelled. You can start a new one anytime — just tell us what you'd like!",
+    ar: "🛑 تم إلغاء اشتراكك {recurringId}. يمكنك بدء اشتراك جديد في أي وقت — فقط أخبرنا بما تريد!",
+    hi: "🛑 आपका सब्सक्रिप्शन {recurringId} रद्द कर दिया गया है। आप कभी भी नया शुरू कर सकते हैं!",
+    ur: "🛑 آپ کی سبسکرپشن {recurringId} منسوخ کر دی گئی ہے۔ آپ کسی بھی وقت نئی شروع کر سکتے ہیں!"
+  },
+
+  recurring_skipped_stock: {
+    en: "😔 We couldn't prepare your recurring delivery of {quantity} {items} today — not enough stock. We've alerted the shop and your next delivery is {date}. Sorry!",
+    ar: "😔 لم نتمكن من تجهيز توصيلتك الدورية ({quantity} {items}) اليوم — المخزون غير كافٍ. تم إبلاغ المتجر، وتوصيلتك القادمة {date}. نعتذر!",
+    hi: "😔 स्टॉक कम होने से आज आपकी नियमित डिलीवरी ({quantity} {items}) तैयार नहीं हो सकी। दुकान को सूचित कर दिया गया है, अगली डिलीवरी {date} को होगी। क्षमा करें!",
+    ur: "😔 اسٹاک کم ہونے کی وجہ سے آج آپ کی باقاعدہ ڈیلیوری ({quantity} {items}) تیار نہیں ہو سکی۔ دکان کو اطلاع دے دی گئی ہے، اگلی ڈیلیوری {date} کو ہوگی۔ معذرت!"
   }
 };
 

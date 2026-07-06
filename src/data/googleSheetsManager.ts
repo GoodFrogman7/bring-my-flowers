@@ -1,7 +1,8 @@
 import { google } from 'googleapis';
 import logger from '../utils/logger';
-import { Order, InventoryItem, Delivery, DailyLog, OrderStatus, ACTIVE_ORDER_STATUSES } from '../types';
-import { DataStore } from './dataStore';
+import { Order, InventoryItem, Delivery, DailyLog, OrderStatus, RecurringOrder, RecurringFrequency, RecurringStatus, ACTIVE_ORDER_STATUSES } from '../types';
+import { DataStore, RecurringOrderUpdate } from './dataStore';
+import { samePhone } from '../utils/ids';
 
 export class GoogleSheetsManager implements DataStore {
   private sheets: any;
@@ -160,6 +161,16 @@ export class GoogleSheetsManager implements DataStore {
     }
   }
 
+  async getOrderById(orderId: string): Promise<Order | null> {
+    const orders = await this.getAllOrders();
+    return orders.find(o => o.order_id === orderId) || null;
+  }
+
+  async getOrdersByDate(date: string): Promise<Order[]> {
+    const orders = await this.getAllOrders();
+    return orders.filter(o => o.date === date);
+  }
+
   async getUpcomingOrderByCustomerPhone(phone: string): Promise<Order | null> {
     const orders = await this.getAllOrders();
     const today = new Date().toISOString().split('T')[0];
@@ -228,6 +239,112 @@ export class GoogleSheetsManager implements DataStore {
       logger.info({ order_id: orderId, new_date: newDate }, 'Order date updated');
     } catch (error) {
       logger.error({ error, orderId }, 'Failed to update order date');
+      throw error;
+    }
+  }
+
+  // Recurring orders — Recurring_Orders tab, columns A:M matching the type.
+  async addRecurringOrder(recurring: RecurringOrder): Promise<void> {
+    try {
+      const values = [[
+        recurring.recurring_id,
+        recurring.customer_phone,
+        recurring.customer_name,
+        recurring.items,
+        recurring.quantity,
+        recurring.frequency,
+        recurring.day,
+        recurring.next_date,
+        recurring.status,
+        recurring.amount,
+        recurring.language || 'en',
+        recurring.created_date || new Date().toISOString(),
+        recurring.notes || ''
+      ]];
+
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Recurring_Orders!A:M',
+        valueInputOption: 'RAW',
+        resource: { values },
+      });
+
+      logger.info({ recurring_id: recurring.recurring_id }, 'Recurring order appended to Google Sheets');
+    } catch (error) {
+      logger.error({ error, recurring }, 'Failed to append recurring order');
+      throw error;
+    }
+  }
+
+  async getAllRecurringOrders(): Promise<RecurringOrder[]> {
+    try {
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Recurring_Orders!A2:M',
+      });
+
+      const rows = response.data.values || [];
+      return rows.map((row: any[]): RecurringOrder => ({
+        recurring_id: row[0] || '',
+        customer_phone: row[1] || '',
+        customer_name: row[2] || '',
+        items: row[3] || '',
+        quantity: parseInt(row[4]) || 0,
+        frequency: (row[5] || 'WEEKLY') as RecurringFrequency,
+        day: parseInt(row[6]) || 0,
+        next_date: row[7] || '',
+        status: (row[8] || 'ACTIVE') as RecurringStatus,
+        amount: parseFloat(row[9]) || 0,
+        language: row[10] || 'en',
+        created_date: row[11] || '',
+        notes: row[12] || ''
+      }));
+    } catch (error) {
+      logger.error({ error }, 'Failed to get recurring orders');
+      return [];
+    }
+  }
+
+  async getRecurringOrdersByCustomerPhone(phone: string): Promise<RecurringOrder[]> {
+    const all = await this.getAllRecurringOrders();
+    return all.filter(r => samePhone(r.customer_phone, phone));
+  }
+
+  async updateRecurringOrder(recurringId: string, updates: RecurringOrderUpdate): Promise<void> {
+    try {
+      const all = await this.getAllRecurringOrders();
+      const index = all.findIndex(r => r.recurring_id === recurringId);
+
+      if (index === -1) {
+        logger.warn({ recurring_id: recurringId }, 'Recurring order not found');
+        return;
+      }
+
+      const rowNumber = index + 2;
+      const columnByField: Record<string, string> = {
+        quantity: 'E',
+        next_date: 'H',
+        status: 'I',
+        notes: 'M'
+      };
+
+      const data = Object.entries(updates)
+        .filter(([field]) => columnByField[field])
+        .map(([field, value]) => ({
+          range: `Recurring_Orders!${columnByField[field]}${rowNumber}`,
+          values: [[value]]
+        }));
+
+      if (data.length === 0) return;
+
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        resource: { data, valueInputOption: 'RAW' },
+      });
+
+      logger.info({ recurring_id: recurringId, updates }, 'Recurring order updated');
+    } catch (error) {
+      logger.error({ error, recurringId }, 'Failed to update recurring order');
       throw error;
     }
   }
@@ -355,6 +472,9 @@ export class GoogleSheetsManager implements DataStore {
       if (!sheetNames.includes('Daily_Logs')) {
         await this.createDailyLogsSheet();
       }
+      if (!sheetNames.includes('Recurring_Orders')) {
+        await this.createRecurringOrdersSheet();
+      }
 
       logger.info('Google Sheets initialized');
     } catch (error) {
@@ -403,6 +523,25 @@ export class GoogleSheetsManager implements DataStore {
     await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.spreadsheetId,
       range: 'Daily_Logs!A1:H1',
+      valueInputOption: 'RAW',
+      resource: { values: headers },
+    });
+  }
+
+  private async createRecurringOrdersSheet() {
+    const headers = [['recurring_id', 'customer_phone', 'customer_name', 'items', 'quantity', 'frequency', 'day', 'next_date', 'status', 'amount', 'language', 'created_date', 'notes']];
+
+    // values.update can't create a missing tab, so add the sheet first
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      resource: {
+        requests: [{ addSheet: { properties: { title: 'Recurring_Orders' } } }],
+      },
+    });
+
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.spreadsheetId,
+      range: 'Recurring_Orders!A1:M1',
       valueInputOption: 'RAW',
       resource: { values: headers },
     });

@@ -8,13 +8,15 @@ import { GoogleSheetsManager } from './data/googleSheetsManager';
 import { DataStore } from './data/dataStore';
 import { DeliveryNotifier } from './notifications/deliveryNotifier';
 import { MessageHandler } from './handlers/messageHandler';
-import { DirectOrderFulfillment, PaymentLinkFulfillment } from './handlers/orderFulfillment';
+import { OwnerCommandHandler } from './handlers/ownerCommands';
+import { DirectOrderFulfillment, PaymentLinkFulfillment, OrderFulfillment } from './handlers/orderFulfillment';
 import { DailySummaryGenerator } from './summary/dailySummary';
+import { DailyOpsScheduler } from './scheduler/dailyOps';
 import { RazorpayClient } from './payment/razorpayClient';
 import { VoiceTranscriber } from './voice/transcriber';
 import { CalendarManager } from './calendar/calendarManager';
 import { InventoryMonitor } from './inventory/inventoryMonitor';
-import { createServer } from './server';
+import { createServer, VoiceComponents, PaymentComponents } from './server';
 import { loadConfig, ensureDirectories } from './utils/config';
 import logger from './utils/logger';
 
@@ -27,6 +29,9 @@ import logger from './utils/logger';
  *               order confirmation.
  *   enhanced  — Twilio + Google Sheets + Razorpay payment links + voice-call
  *               ordering + Google Calendar + inventory monitoring.
+ *
+ * Every mode gets the owner command channel, recurring-order materialization,
+ * and morning delivery reminders.
  *
  * Mode is chosen by CLI argument (`node dist/index.js enhanced`) or the
  * BOT_MODE environment variable; default is baileys.
@@ -87,98 +92,51 @@ async function main() {
       logger.warn(`Ollama not responding - will use fallback classification. Run: ollama pull ${config.ollama.model}`);
     }
 
-    // Assembled per mode below.
+    // ---- Mode-specific transport, storage, and extras ----------------------
     let dataStore!: DataStore;
     let whatsappBot!: MessageSender & { disconnect(): Promise<void> };
-    let messageHandler!: MessageHandler;
-    let server: ReturnType<typeof createServer> | null = null;
+    let razorpayClient: RazorpayClient | null = null;
+    let baileysBot: WhatsAppBot | null = null;
+    let twilioAuthToken: string | undefined;
+    let voiceComponents: VoiceComponents | undefined;
+    let paymentComponents: PaymentComponents | undefined;
     let inventoryMonitor: InventoryMonitor | null = null;
 
-    if (mode === 'baileys') {
+    const buildExcelStore = () => {
       logger.info({ filePath: config.excel.filePath }, 'Initializing Excel manager');
       const excelManager = new ExcelManager(
         config.excel.filePath,
         config.excel.backupPath,
         config.excel.backupBeforeWrite
       );
-      dataStore = excelManager;
       logger.info('✓ Excel manager initialized');
+      return excelManager;
+    };
 
-      logger.info('Initializing WhatsApp bot');
-      const bot = new WhatsAppBot(
+    if (mode === 'baileys') {
+      dataStore = buildExcelStore();
+      baileysBot = new WhatsAppBot(
         config.whatsapp.sessionPath,
         config.whatsapp.reconnectDelay,
         config.whatsapp.maxReconnectAttempts
       );
-      whatsappBot = bot;
-
-      const notifier = new DeliveryNotifier(bot);
-      messageHandler = new MessageHandler({
-        ollamaClient,
-        dataStore,
-        notifier,
-        fulfillment: new DirectOrderFulfillment(dataStore, ollamaClient, notifier),
-        rateLimitPerMinute: config.messaging.rateLimitPerMinute,
-        confirmationRequired: config.messaging.confirmationRequired
-      });
-      logger.info('✓ Message handler initialized');
-
-      bot.onMessage(async (from, message) => {
-        await messageHandler.handleMessage(from, message);
-      });
-
-      logger.info('Starting WhatsApp bot...');
-      await bot.start();
-
-      // Wait for the QR scan / session restore to connect
-      let attempts = 0;
-      while (!bot.isConnected() && attempts < 60) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        attempts++;
-      }
-
-      if (!bot.isConnected()) {
-        logger.error('WhatsApp bot failed to connect within 60 seconds');
-        process.exit(1);
-      }
-      logger.info('✓ WhatsApp bot connected successfully');
+      whatsappBot = baileysBot;
     } else {
-      const [twilioAccountSid, twilioAuthToken, twilioWhatsAppNumber] = requireEnv(mode, [
+      const [twilioAccountSid, authToken, twilioWhatsAppNumber] = requireEnv(mode, [
         'TWILIO_ACCOUNT_SID',
         'TWILIO_AUTH_TOKEN',
         'TWILIO_WHATSAPP_NUMBER'
       ]);
+      twilioAuthToken = authToken;
 
       logger.info('Initializing Twilio WhatsApp bot');
-      const bot = new TwilioWhatsAppBot(twilioAccountSid, twilioAuthToken, twilioWhatsAppNumber);
+      const bot = new TwilioWhatsAppBot(twilioAccountSid, authToken, twilioWhatsAppNumber);
       await bot.start();
       whatsappBot = bot;
       logger.info('✓ Twilio WhatsApp bot initialized');
 
-      const notifier = new DeliveryNotifier(bot);
-      const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3000');
-
       if (mode === 'twilio') {
-        logger.info({ filePath: config.excel.filePath }, 'Initializing Excel manager');
-        const excelManager = new ExcelManager(
-          config.excel.filePath,
-          config.excel.backupPath,
-          config.excel.backupBeforeWrite
-        );
-        dataStore = excelManager;
-        logger.info('✓ Excel manager initialized');
-
-        messageHandler = new MessageHandler({
-          ollamaClient,
-          dataStore,
-          notifier,
-          fulfillment: new DirectOrderFulfillment(dataStore, ollamaClient, notifier),
-          rateLimitPerMinute: config.messaging.rateLimitPerMinute,
-          confirmationRequired: config.messaging.confirmationRequired
-        });
-        logger.info('✓ Message handler initialized');
-
-        server = createServer({ messageHandler, twilioAuthToken }, webhookPort);
+        dataStore = buildExcelStore();
       } else {
         const [razorpayKeyId, razorpayKeySecret, googleSpreadsheetId] = requireEnv(mode, [
           'RAZORPAY_KEY_ID',
@@ -204,25 +162,15 @@ async function main() {
         logger.info('✓ Google Sheets manager initialized');
 
         logger.info('Initializing Razorpay client');
-        const razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret);
+        razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret);
         logger.info('✓ Razorpay client initialized');
 
         const voiceTranscriber = new VoiceTranscriber('base');
-        logger.info('✓ Voice Transcriber initialized');
-
         const calendarManager = new CalendarManager(authClient);
-        logger.info('✓ Calendar Manager initialized');
+        logger.info('✓ Voice transcriber and calendar manager initialized');
 
-        // Orders end in a Razorpay payment link; the payment webhook confirms them
-        messageHandler = new MessageHandler({
-          ollamaClient,
-          dataStore,
-          notifier,
-          fulfillment: new PaymentLinkFulfillment(dataStore, razorpayClient, notifier),
-          rateLimitPerMinute: config.messaging.rateLimitPerMinute,
-          confirmationRequired: config.messaging.confirmationRequired
-        });
-        logger.info('✓ Message handler initialized');
+        voiceComponents = { transcriber: voiceTranscriber, dataStore };
+        paymentComponents = { razorpayClient, dataStore, calendarManager, whatsappBot: bot };
 
         inventoryMonitor = new InventoryMonitor(
           sheetsManager,
@@ -230,20 +178,16 @@ async function main() {
           config.whatsapp.owners,
           calendarManager
         );
-        inventoryMonitor.start();
-        logger.info('✓ Inventory Monitor started');
-
-        server = createServer({
-          messageHandler,
-          twilioAuthToken,
-          voice: { transcriber: voiceTranscriber, dataStore },
-          payment: { razorpayClient, dataStore, calendarManager, whatsappBot: bot }
-        }, webhookPort);
       }
     }
 
-    // Daily summary runs in every mode
-    logger.info({ time: config.scheduler.summaryTime }, 'Initializing daily summary generator');
+    // ---- Shared wiring ------------------------------------------------------
+    const notifier = new DeliveryNotifier(whatsappBot);
+    // Orders end in a Razorpay payment link in enhanced mode, direct confirm otherwise
+    const fulfillment: OrderFulfillment = razorpayClient
+      ? new PaymentLinkFulfillment(dataStore, razorpayClient, notifier)
+      : new DirectOrderFulfillment(dataStore, ollamaClient, notifier);
+
     const summaryGenerator = new DailySummaryGenerator(
       ollamaClient,
       dataStore,
@@ -251,14 +195,82 @@ async function main() {
       config.whatsapp.owners,
       config.scheduler.summaryTime
     );
+
+    const dailyOps = new DailyOpsScheduler({
+      dataStore,
+      fulfillment,
+      notifier,
+      owners: config.whatsapp.owners,
+      ownerSender: whatsappBot,
+      recurringTime: config.scheduler.recurringTime,
+      reminderTime: config.scheduler.reminderTime
+    });
+
+    const ownerCommands = new OwnerCommandHandler({
+      dataStore,
+      notifier,
+      sender: whatsappBot,
+      owners: config.whatsapp.owners,
+      summary: summaryGenerator,
+      dailyOps
+    });
+
+    const messageHandler = new MessageHandler({
+      ollamaClient,
+      dataStore,
+      notifier,
+      fulfillment,
+      ownerCommands,
+      rateLimitPerMinute: config.messaging.rateLimitPerMinute,
+      confirmationRequired: config.messaging.confirmationRequired
+    });
+    logger.info('✓ Message handler initialized');
+
+    // ---- Start transports -----------------------------------------------------
+    let server: ReturnType<typeof createServer> | null = null;
+
+    if (baileysBot) {
+      baileysBot.onMessage(async (from, message) => {
+        await messageHandler.handleMessage(from, message);
+      });
+
+      logger.info('Starting WhatsApp bot...');
+      await baileysBot.start();
+
+      // Wait for the QR scan / session restore to connect
+      let attempts = 0;
+      while (!baileysBot.isConnected() && attempts < 60) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      if (!baileysBot.isConnected()) {
+        logger.error('WhatsApp bot failed to connect within 60 seconds');
+        process.exit(1);
+      }
+      logger.info('✓ WhatsApp bot connected successfully');
+    } else {
+      const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3000');
+      server = createServer({
+        messageHandler,
+        twilioAuthToken,
+        voice: voiceComponents,
+        payment: paymentComponents
+      }, webhookPort);
+    }
+
+    // ---- Start schedulers -----------------------------------------------------
     summaryGenerator.start();
-    logger.info('✓ Daily summary scheduler started');
+    dailyOps.start();
+    inventoryMonitor?.start();
+    logger.info('✓ Schedulers started');
 
     logger.info({ mode }, '🎉 Bring My Flowers Chatbot is fully operational!');
     console.log('\n=====================================================');
     console.log(`🌸 Mode: ${mode}`);
     console.log('📱 WhatsApp: Connected and listening for messages');
-    console.log(`📊 Daily Summary: Scheduled at ${config.scheduler.summaryTime}`);
+    console.log(`📊 Daily Summary: ${config.scheduler.summaryTime} · 🔁 Recurring: ${config.scheduler.recurringTime} · 🔔 Reminders: ${config.scheduler.reminderTime}`);
+    console.log(`👑 Owner commands: ${config.whatsapp.owners.length > 0 ? `enabled for ${config.whatsapp.owners.length} number(s) — text "help"` : 'no OWNER_NUMBERS configured'}`);
     if (mode === 'enhanced') {
       console.log('📊 Google Sheets + 📅 Calendar + 💰 Razorpay: Connected');
       console.log('🌍 Languages: EN, AR, HI, UR');
@@ -276,6 +288,7 @@ async function main() {
     const shutdown = async () => {
       logger.info('Shutting down gracefully...');
       summaryGenerator.stop();
+      dailyOps.stop();
       inventoryMonitor?.stop();
       await whatsappBot.disconnect();
       server?.close();

@@ -1,6 +1,12 @@
 import { MessageSender } from '../bot/messageSender';
 import logger from '../utils/logger';
 import { Order, Delivery } from '../types';
+import { responses, formatResponse, Language } from '../i18n/languageDetector';
+
+function orderLanguage(order: Order): Language {
+  const lang = order.language as Language | undefined;
+  return lang && ['en', 'ar', 'hi', 'ur'].includes(lang) ? lang : 'en';
+}
 
 export class DeliveryNotifier {
   private bot: MessageSender;
@@ -125,6 +131,30 @@ Good luck with your deliveries! 🚚`;
       }, 'Failed to send daily manifest');
       return false;
     }
+  }
+
+  /** Tell the customer their order is out for delivery, in their language. */
+  async notifyOutForDelivery(order: Order): Promise<boolean> {
+    const message = formatResponse(responses.out_for_delivery[orderLanguage(order)], {
+      orderId: order.order_id
+    });
+    return this.sendCustomMessage(order.customer_phone, message);
+  }
+
+  /** Tell the customer their order was delivered, in their language. */
+  async notifyDelivered(order: Order): Promise<boolean> {
+    const message = formatResponse(responses.delivered[orderLanguage(order)], {
+      orderId: order.order_id
+    });
+    return this.sendCustomMessage(order.customer_phone, message);
+  }
+
+  /** Morning "your delivery is today" reminder, in the customer's language. */
+  async notifyDeliveryReminder(order: Order): Promise<boolean> {
+    const message = formatResponse(responses.delivery_reminder[orderLanguage(order)], {
+      orderId: order.order_id
+    });
+    return this.sendCustomMessage(order.customer_phone, message);
   }
 
   async sendCustomMessage(phone: string, message: string): Promise<boolean> {

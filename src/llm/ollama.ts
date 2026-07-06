@@ -221,11 +221,11 @@ Thank you! 🌸`;
   }
 
   async classifyMessage(message: string, customerPhone: string): Promise<ParsedMessage> {
-    const systemPrompt = `You are a message classifier for a flower delivery business. 
+    const systemPrompt = `You are a message classifier for a flower delivery business.
 Analyze customer messages and extract key information.
 Respond ONLY with valid JSON in this exact format:
 {
-  "intent": "NO_DELIVERY" | "RESCHEDULE" | "INQUIRY" | "ORDER" | "UNKNOWN",
+  "intent": "NO_DELIVERY" | "RESCHEDULE" | "INQUIRY" | "ORDER" | "RECURRING" | "UNKNOWN",
   "customer_phone": "phone number",
   "customer_name": "name if mentioned",
   "date": "date if mentioned in YYYY-MM-DD format",
@@ -240,7 +240,9 @@ Classify this message and extract information. Common phrases:
 - "no delivery", "cancel", "don't deliver" → NO_DELIVERY
 - "deliver tomorrow", "change to", "reschedule" → RESCHEDULE
 - "status", "when", "do you have" → INQUIRY
-- "I want", "order", "send me" → ORDER
+- "I want", "order", "send me" (one-off) → ORDER
+- "every week", "every Monday", "daily", "monthly", "subscription", "standing order" → RECURRING
+- anything mentioning a subscription (pause/cancel/resume it) → RECURRING
 
 Return JSON only:`;
 
@@ -267,12 +269,23 @@ Return JSON only:`;
 
   private detectIntentFallback(message: string): MessageIntent {
     const lowerMessage = message.toLowerCase();
-    
+
+    // Subscription-specific words win even over cancellation phrasing:
+    // "cancel my subscription" must not cancel a single order.
+    if (lowerMessage.match(/subscri(be|ption)|recurring|standing\s+order|\brec-/i)) {
+      return MessageIntent.RECURRING;
+    }
+
     // IMPORTANT: Check cancellation patterns FIRST (most specific)
     if (lowerMessage.match(/no\s+delivery|cancel.*delivery|don'?t\s+(want|need).*delivery|skip\s+today|cancel.*order/i)) {
       return MessageIntent.NO_DELIVERY;
     }
-    
+
+    // Recurrence cadence ("every monday", "weekly", "daily") → subscription
+    if (lowerMessage.match(/\bevery\s+(day|week|month|sun|mon|tue|wed|thu|fri|sat)|\bdaily\b|\bweekly\b|\bmonthly\b/i)) {
+      return MessageIntent.RECURRING;
+    }
+
     // Check reschedule patterns
     if (lowerMessage.match(/reschedule|change.*date|deliver\s+(on|tomorrow|next)/i)) {
       return MessageIntent.RESCHEDULE;

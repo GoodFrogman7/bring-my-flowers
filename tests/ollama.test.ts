@@ -63,6 +63,10 @@ describe('classifyMessage', () => {
     ['do you have tulips', MessageIntent.INQUIRY],
     ['I want 5 roses', MessageIntent.ORDER],
     ['send me lilies', MessageIntent.ORDER],
+    ['10 roses every monday', MessageIntent.RECURRING],
+    ['I want a weekly subscription', MessageIntent.RECURRING],
+    ['cancel my subscription', MessageIntent.RECURRING],
+    ['send me tulips daily', MessageIntent.RECURRING],
     ['asdf qwerty', MessageIntent.UNKNOWN]
   ])('classifies %j as %s offline when Ollama is unreachable', async (message, intent) => {
     mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));

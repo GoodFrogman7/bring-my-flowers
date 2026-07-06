@@ -1,4 +1,5 @@
 import { Language } from '../i18n/languageDetector';
+import { RecurrenceSpec } from '../utils/recurrence';
 import logger from '../utils/logger';
 
 /**
@@ -9,8 +10,10 @@ export interface OrderDraft {
   /** Flower name; once fuzzy-matched this holds the exact inventory name. */
   flowers: string | null;
   quantity: number | null;
-  /** Delivery date, YYYY-MM-DD */
+  /** Delivery date, YYYY-MM-DD. Unused when the draft is a subscription. */
   date: string | null;
+  /** Set when the customer asked for a subscription instead of a one-off order. */
+  recurrence?: RecurrenceSpec;
   stage: 'COLLECTING' | 'AWAITING_CONFIRMATION';
   language: Language;
   updatedAt: number;
