@@ -11,6 +11,7 @@ One entry point (`src/index.ts`) runs in one of three modes:
 | `baileys` (default) | WhatsApp Web, QR login | Excel | Confirmed directly | — |
 | `twilio` | Twilio API + webhook | Excel | Confirmed directly | — |
 | `enhanced` | Twilio API + webhook | Google Sheets | Razorpay payment link | Voice calls, Google Calendar, inventory alerts, EN/AR/HI/UR |
+| `business` | WhatsApp Web (or Twilio) | SQLite | Subscription operation | The real flower-subscription business: instruction intake, delivery sheets, payment runs — see [docs/BUSINESS.md](docs/BUSINESS.md) |
 
 Select the mode with a CLI argument or the `BOT_MODE` environment variable:
 

@@ -17,6 +17,8 @@ import { VoiceTranscriber } from './voice/transcriber';
 import { CalendarManager } from './calendar/calendarManager';
 import { InventoryMonitor } from './inventory/inventoryMonitor';
 import { createServer, VoiceComponents, PaymentComponents } from './server';
+import { openDb } from './business/db';
+import { BusinessMessageHandler } from './business/businessHandler';
 import { loadConfig, ensureDirectories } from './utils/config';
 import logger from './utils/logger';
 
@@ -36,9 +38,9 @@ import logger from './utils/logger';
  * Mode is chosen by CLI argument (`node dist/index.js enhanced`) or the
  * BOT_MODE environment variable; default is baileys.
  */
-export type BotMode = 'baileys' | 'twilio' | 'enhanced';
+export type BotMode = 'baileys' | 'twilio' | 'enhanced' | 'business';
 
-const MODES: BotMode[] = ['baileys', 'twilio', 'enhanced'];
+const MODES: BotMode[] = ['baileys', 'twilio', 'enhanced', 'business'];
 
 function resolveMode(): BotMode {
   const raw = (process.argv[2]?.replace(/^--mode=/, '') || process.env.BOT_MODE || 'baileys').toLowerCase();
@@ -46,9 +48,11 @@ function resolveMode(): BotMode {
     console.error(`❌ Unknown mode "${raw}". Use one of: ${MODES.join(', ')}\n`);
     console.error('  baileys   — WhatsApp Web (QR code), Excel storage, no payment step');
     console.error('  twilio    — Twilio WhatsApp API, Excel storage, no payment step');
-    console.error('  enhanced  — Twilio + Google Sheets + Razorpay + voice + calendar\n');
+    console.error('  enhanced  — Twilio + Google Sheets + Razorpay + voice + calendar');
+    console.error('  business  — the real subscription operation (SQLite datastore,');
+    console.error('              instruction intake, payment runs; docs/BUSINESS.md)\n');
     console.error('Examples: npm start                (baileys)');
-    console.error('          npm run start:enhanced   (node dist/index.js enhanced)');
+    console.error('          npm run start:business   (node dist/index.js business)');
     process.exit(1);
   }
   return raw as BotMode;
@@ -65,6 +69,85 @@ function requireEnv(mode: BotMode, names: string[]): string[] {
     process.exit(1);
   }
   return names.map(name => process.env[name]!);
+}
+
+/**
+ * The business mode runs the real subscription operation: the customer-care
+ * WhatsApp number (Baileys QR by default, Twilio via BUSINESS_TRANSPORT=twilio)
+ * wired to the SQLite datastore — instruction intake for customers, ops
+ * commands for staff. The generic bot's Excel/Sheets stack stays untouched.
+ */
+async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaClient: OllamaClient): Promise<void> {
+  const dbPath = process.env.BUSINESS_DB || './data/business.db';
+  const db = openDb(dbPath);
+
+  const counts = db.prepare(`
+    SELECT (SELECT COUNT(*) FROM customers) AS customers,
+           (SELECT COUNT(*) FROM subscriptions WHERE status = 'ACTIVE') AS active`).get() as { customers: number; active: number };
+  if (counts.customers === 0) {
+    logger.error(`Business DB is empty (${dbPath}). Run: npm run import:master <Master.xlsx>`);
+    process.exit(1);
+  }
+  logger.info({ dbPath, ...counts }, '✓ Business datastore ready');
+
+  const transport = (process.env.BUSINESS_TRANSPORT || 'baileys').toLowerCase();
+  let bot: MessageSender & { disconnect(): Promise<void> };
+  let server: ReturnType<typeof createServer> | null = null;
+
+  const buildHandler = (sender: MessageSender) => new BusinessMessageHandler({
+    db,
+    sender,
+    ollama: ollamaClient,
+    staff: config.whatsapp.owners
+  });
+
+  if (transport === 'twilio') {
+    const [sid, token, from] = requireEnv('business', ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_WHATSAPP_NUMBER']);
+    const twilioBot = new TwilioWhatsAppBot(sid, token, from);
+    await twilioBot.start();
+    bot = twilioBot;
+    server = createServer({ messageHandler: buildHandler(twilioBot), twilioAuthToken: token }, parseInt(process.env.WEBHOOK_PORT || '3000'));
+  } else {
+    const baileysBot = new WhatsAppBot(
+      config.whatsapp.sessionPath,
+      config.whatsapp.reconnectDelay,
+      config.whatsapp.maxReconnectAttempts
+    );
+    bot = baileysBot;
+    const handler = buildHandler(baileysBot);
+    baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
+
+    logger.info('Starting WhatsApp (scan the QR with the customer-care phone)...');
+    await baileysBot.start();
+    let attempts = 0;
+    while (!baileysBot.isConnected() && attempts < 120) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempts++;
+    }
+    if (!baileysBot.isConnected()) {
+      logger.error('WhatsApp failed to connect within 120 seconds');
+      process.exit(1);
+    }
+  }
+
+  logger.info('🎉 Business mode operational');
+  console.log('\n=====================================================');
+  console.log('🌸 Mode: business (the real subscription operation)');
+  console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
+  console.log(`📱 Transport: ${transport}`);
+  console.log(`👑 Staff numbers: ${config.whatsapp.owners.length > 0 ? config.whatsapp.owners.join(', ') + ' — text "help"' : '⚠️ none set (OWNER_NUMBERS)'}`);
+  console.log('=====================================================\n');
+
+  const shutdown = async () => {
+    logger.info('Shutting down gracefully...');
+    await bot.disconnect();
+    server?.close();
+    db.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  process.stdin.resume();
 }
 
 async function main() {
@@ -90,6 +173,11 @@ async function main() {
       logger.info('✓ Ollama is healthy');
     } else {
       logger.warn(`Ollama not responding - will use fallback classification. Run: ollama pull ${config.ollama.model}`);
+    }
+
+    if (mode === 'business') {
+      await startBusinessMode(config, ollamaClient);
+      return;
     }
 
     // ---- Mode-specific transport, storage, and extras ----------------------

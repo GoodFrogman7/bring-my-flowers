@@ -1,7 +1,6 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import logger from './utils/logger';
-import { MessageHandler } from './handlers/messageHandler';
 import { DataStore } from './data/dataStore';
 import { MessageSender } from './bot/messageSender';
 import { RazorpayClient } from './payment/razorpayClient';
@@ -24,8 +23,13 @@ export interface PaymentComponents {
   whatsappBot: MessageSender;
 }
 
+/** Anything that can process an inbound message (generic bot or business handler). */
+export interface IncomingMessageHandler {
+  handleMessage(from: string, message: string): Promise<void>;
+}
+
 export interface ServerComponents {
-  messageHandler: MessageHandler;
+  messageHandler: IncomingMessageHandler;
   /** When set, Twilio webhook requests must carry a valid signature. */
   twilioAuthToken?: string;
   voice?: VoiceComponents;

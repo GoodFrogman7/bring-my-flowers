@@ -89,6 +89,36 @@ The datastore + import/export pipeline lives in `src/business/`:
 Shadow-tested against the real 06-July sheet: 72/77 rows reproduced; the
 misses are bouquets/subscribers created after the April Master snapshot.
 
+## Phase B implementation (done)
+
+The live-operation layer (`npm run start:business`, or `npm run dev:business`):
+
+- **Instruction intake** (`instructions.ts` + `actions.ts`): deterministic
+  parsing of the fixed customer-instruction vocabulary — skip/hold (one
+  delivery, N weeks, indefinite), resume, day change, one-off reschedule,
+  payment claims, flower restrictions, address changes, status questions,
+  cancellation, renewal — English + common Hinglish. Every action updates the
+  datastore, appends a date-stamped remark in the owner's format
+  ("Hold 1 week (06/07)"), replies to the customer, and alerts staff where a
+  human matters. Payment claims are never auto-marked paid — staff verify and
+  reply `paid <id>`. Cancellations pause deliveries and demand a call-back.
+  Unknown numbers and unparseable messages always escalate; nothing drops.
+- **LLM fallback**: Ollama classifies what the regexes miss into the same
+  instruction types; anything still unclear goes to a human.
+- **Staff ops channel** (message from an `OWNER_NUMBERS` phone): `due`,
+  `sheet <date>`, `payrun`, `pending`, `renewals`, `paid/hold/resume/
+  restrict/note/find/customer`.
+- **Payment run** (`paymentRun.ts`, `npm run payment-run [date]`): the two
+  fixed templates Pooja sends daily, generated per delivery, with a renewal
+  ask appended when a cycle completes; plus the renewal chase list
+  (finished cycles with no new cycle behind them).
+- All business dates are computed in IST regardless of server timezone
+  (`dates.ts`).
+
+Transport: Baileys by default — scan the QR with the **customer-care phone**
+and the bot answers on the number customers already use. `BUSINESS_TRANSPORT=twilio`
+switches to the webhook path. `BUSINESS_DB` overrides the datastore path.
+
 ## Constraints to respect
 
 - The team (Pooja, Sanjay, 5 delivery boys) lives in these sheets. Any system must keep
