@@ -13,7 +13,7 @@ export class OllamaClient {
     this.timeout = timeout;  // Increased to 60 seconds for better reliability
   }
 
-  async generate(prompt: string, systemPrompt?: string): Promise<string> {
+  async generate(prompt: string, systemPrompt?: string, options?: { json?: boolean }): Promise<string> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -25,7 +25,10 @@ export class OllamaClient {
           model: this.model,
           prompt: prompt,
           system: systemPrompt,
-          stream: false
+          stream: false,
+          // Ollama's native JSON mode constrains decoding to valid JSON —
+          // far more reliable than scraping JSON out of prose with a regex.
+          ...(options?.json ? { format: 'json' } : {})
         }),
         signal: controller.signal
       });
@@ -41,6 +44,22 @@ export class OllamaClient {
     } catch (error) {
       logger.error({ error, endpoint: this.endpoint }, 'Ollama generate failed');
       throw error;
+    }
+  }
+
+  /**
+   * Parse a JSON-mode response; falls back to extracting the first JSON
+   * object from prose for models/endpoints that ignore format constraints.
+   */
+  private parseJsonResponse<T>(response: string): T {
+    try {
+      return JSON.parse(response) as T;
+    } catch {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON found in response');
+      }
+      return JSON.parse(jsonMatch[0]) as T;
     }
   }
 
@@ -80,15 +99,14 @@ Examples:
 Return ONLY JSON:`;
 
     try {
-      const response = await this.generate(prompt, systemPrompt);
+      const response = await this.generate(prompt, systemPrompt, { json: true });
       logger.info({ response, message }, 'Ollama order extraction response');
-      
-      const jsonMatch = response.match(/\{[\s\S]*?\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
-      
-      const extracted = JSON.parse(jsonMatch[0]);
+
+      const extracted = this.parseJsonResponse<{
+        flowers?: string | null;
+        quantity?: number | null;
+        date?: string | null;
+      }>(response);
       return {
         flowers: extracted.flowers || null,
         quantity: extracted.quantity || null,
@@ -227,17 +245,10 @@ Classify this message and extract information. Common phrases:
 Return JSON only:`;
 
     try {
-      const response = await this.generate(prompt, systemPrompt);
-      
-      // Extract JSON from response (handle cases where model adds extra text)
-      let jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        logger.warn({ response }, 'No JSON found in Ollama response');
-        return this.createFallbackParsedMessage(message, customerPhone);
-      }
+      const response = await this.generate(prompt, systemPrompt, { json: true });
 
-      const parsed = JSON.parse(jsonMatch[0]) as ParsedMessage;
-      
+      const parsed = this.parseJsonResponse<ParsedMessage>(response);
+
       // Validate and set defaults
       if (!parsed.intent || !Object.values(MessageIntent).includes(parsed.intent)) {
         parsed.intent = this.detectIntentFallback(message);

@@ -9,6 +9,12 @@ TWILIO_ACCOUNT_SID=your_account_sid_here
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
 
+# Public base URL Twilio calls (your ngrok/production https URL).
+# Used to verify webhook signatures; set this whenever you restart ngrok.
+WEBHOOK_BASE_URL=https://your-subdomain.ngrok-free.app
+# Set to false ONLY for local curl testing without Twilio signatures
+TWILIO_VALIDATE_WEBHOOK=true
+
 # --------------------------------------------
 # GOOGLE CLOUD (NEW - Required)
 # --------------------------------------------
@@ -25,6 +31,9 @@ GOOGLE_SPREADSHEET_ID=
 # Get from: https://dashboard.razorpay.com/app/keys
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
+# Webhook secret you set in Razorpay dashboard → Webhooks (NOT the key secret).
+# Payment webhooks are rejected until this is configured.
+RAZORPAY_WEBHOOK_SECRET=
 
 # Payment callback URL (set after ngrok starts)
 PAYMENT_CALLBACK_URL=https://your-ngrok-url.ngrok-free.dev/payment/success

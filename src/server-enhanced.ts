@@ -8,6 +8,7 @@ import { RazorpayClient } from './payment/razorpayClient';
 import { VoiceTranscriber } from './voice/transcriber';
 import { CalendarManager } from './calendar/calendarManager';
 import { LanguageDetector } from './i18n/languageDetector';
+import { twilioSignatureValidator } from './utils/twilioSignature';
 
 export interface EnhancedServerComponents {
   messageHandler: MessageHandler;
@@ -17,13 +18,23 @@ export interface EnhancedServerComponents {
   whatsappBot: MessageSender;
   calendarManager: CalendarManager;
   languageDetector: LanguageDetector;
+  twilioAuthToken: string;
 }
 
 export function createEnhancedServer(components: EnhancedServerComponents, port: number = 3000) {
   const app = express();
 
+  // Behind ngrok/reverse proxies so req.protocol reflects the public URL
+  app.enable('trust proxy');
+
   app.use(bodyParser.urlencoded({ extended: false }));
-  app.use(bodyParser.json());
+  // Keep the raw bytes: Razorpay signs the exact payload it sent, and
+  // re-serializing req.body does not reproduce it byte-for-byte.
+  app.use(bodyParser.json({
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+    }
+  }));
 
   const {
     messageHandler,
@@ -32,13 +43,16 @@ export function createEnhancedServer(components: EnhancedServerComponents, port:
     voiceTranscriber,
     whatsappBot,
     calendarManager,
-    languageDetector
+    languageDetector,
+    twilioAuthToken
   } = components;
+
+  const validateTwilio = twilioSignatureValidator(twilioAuthToken);
 
   // WhatsApp text message webhook. All messages go through intent
   // classification in MessageHandler — no keyword pre-routing, which used to
   // send "I want to cancel my order" into the order/payment flow.
-  app.post('/webhook/whatsapp', async (req, res) => {
+  app.post('/webhook/whatsapp', validateTwilio, async (req, res) => {
     try {
       const from = req.body.From || '';
       const body = req.body.Body || '';
@@ -60,7 +74,7 @@ export function createEnhancedServer(components: EnhancedServerComponents, port:
   });
 
   // Voice call webhook
-  app.post('/webhook/voice', async (req, res) => {
+  app.post('/webhook/voice', validateTwilio, async (req, res) => {
     try {
       logger.info({ body: req.body }, 'Received voice call');
 
@@ -99,7 +113,7 @@ export function createEnhancedServer(components: EnhancedServerComponents, port:
   });
 
   // Voice recording processing
-  app.post('/webhook/voice/recording', async (req, res) => {
+  app.post('/webhook/voice/recording', validateTwilio, async (req, res) => {
     try {
       const recordingUrl = req.body.RecordingUrl;
       const from = req.body.From || '';
@@ -133,29 +147,29 @@ export function createEnhancedServer(components: EnhancedServerComponents, port:
   app.post('/webhook/payment', async (req, res) => {
     try {
       const signature = req.headers['x-razorpay-signature'] as string;
-      const payload = JSON.stringify(req.body);
+      const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody;
 
-      // Verify webhook signature
-      const isValid = razorpayClient.verifyWebhookSignature(payload, signature);
+      // Verify signature over the exact bytes Razorpay sent
+      const isValid = rawBody && razorpayClient.verifyWebhookSignature(rawBody, signature);
 
       if (!isValid) {
-        logger.error('Invalid webhook signature');
+        logger.error('Invalid Razorpay webhook signature');
         return res.status(400).send('Invalid signature');
       }
 
       const event = req.body.event;
       const paymentEntity = req.body.payload?.payment_link?.entity;
+      const orderId = paymentEntity?.notes?.order_id;
 
-      logger.info({ event, entity: paymentEntity }, 'Payment webhook received');
+      logger.info({ event, order_id: orderId }, 'Payment webhook received');
 
-      if (event === 'payment_link.paid' && paymentEntity) {
-        const orderId = paymentEntity.notes?.order_id;
+      if (!paymentEntity || !orderId) {
+        logger.warn({ event }, 'Payment webhook without payment_link entity or order_id note; ignoring');
+        return res.status(200).send('OK');
+      }
+
+      if (event === 'payment_link.paid') {
         const paymentId = paymentEntity.payments?.[0]?.payment_id;
-
-        if (!orderId) {
-          logger.warn({ event }, 'Payment webhook without order_id note; ignoring');
-          return res.status(200).send('OK');
-        }
 
         // Update order payment status
         await dataStore.updateOrderPayment(orderId, paymentId || '');
@@ -178,6 +192,30 @@ export function createEnhancedServer(components: EnhancedServerComponents, port:
           await whatsappBot.sendMessage(order.customer_phone, confirmationMessage);
 
           logger.info({ order_id: orderId }, 'Order confirmed after payment');
+        }
+      } else if (event === 'payment_link.expired' || event === 'payment_link.cancelled') {
+        // Abandoned link: release the reserved stock and cancel the order
+        const orders = await dataStore.getAllOrders();
+        const order = orders.find(o => o.order_id === orderId);
+
+        if (order && order.status === 'PENDING_PAYMENT') {
+          await dataStore.updateOrderStatus(
+            orderId,
+            'CANCELED',
+            event === 'payment_link.expired' ? 'Payment link expired' : 'Payment link cancelled'
+          );
+
+          const itemNames = order.items.split(',').map(item => item.trim());
+          for (const itemName of itemNames) {
+            await dataStore.updateInventory(itemName, order.quantity);
+          }
+
+          await whatsappBot.sendMessage(
+            order.customer_phone,
+            `Your payment link for order ${orderId} has expired, so the order was cancelled. Message us anytime to order again! 🌸`
+          );
+
+          logger.info({ order_id: orderId, event }, 'Unpaid order cancelled and stock returned');
         }
       }
 

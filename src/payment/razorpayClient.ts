@@ -4,14 +4,19 @@ import logger from '../utils/logger';
 
 export class RazorpayClient {
   private razorpay: Razorpay;
-  private keySecret: string;
+  private webhookSecret: string;
 
-  constructor(keyId: string, keySecret: string) {
+  constructor(keyId: string, keySecret: string, webhookSecret?: string) {
     this.razorpay = new Razorpay({
       key_id: keyId,
       key_secret: keySecret,
     });
-    this.keySecret = keySecret;
+    // Razorpay signs webhooks with the webhook secret configured in the
+    // dashboard — NOT the API key secret.
+    this.webhookSecret = webhookSecret || '';
+    if (!this.webhookSecret) {
+      logger.error('RAZORPAY_WEBHOOK_SECRET not set — all payment webhooks will be rejected until it is configured (Razorpay dashboard → Webhooks)');
+    }
     logger.info('Razorpay client initialized');
   }
 
@@ -36,6 +41,9 @@ export class RazorpayClient {
           whatsapp: true,
         },
         reminder_enable: true,
+        // Unpaid links expire after 24h; the webhook then returns the
+        // reserved stock and cancels the order.
+        expire_by: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
         notes: {
           order_id: params.orderId,
         },
@@ -59,14 +67,20 @@ export class RazorpayClient {
     }
   }
 
-  verifyWebhookSignature(payload: string, signature: string): boolean {
+  verifyWebhookSignature(payload: string | Buffer, signature: string): boolean {
     try {
+      if (!this.webhookSecret || !signature) {
+        return false;
+      }
+
       const expectedSignature = crypto
-        .createHmac('sha256', this.keySecret)
+        .createHmac('sha256', this.webhookSecret)
         .update(payload)
         .digest('hex');
 
-      return expectedSignature === signature;
+      const expected = Buffer.from(expectedSignature, 'utf8');
+      const received = Buffer.from(signature, 'utf8');
+      return expected.length === received.length && crypto.timingSafeEqual(expected, received);
     } catch (error) {
       logger.error({ error }, 'Failed to verify webhook signature');
       return false;

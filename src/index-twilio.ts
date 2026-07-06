@@ -83,7 +83,7 @@ async function main() {
 
     // Set up webhook endpoint for receiving messages
     const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3000');
-    const server = createWebhookServer(messageHandler, webhookPort);
+    const server = createWebhookServer(messageHandler, webhookPort, twilioAuthToken);
 
     // Initialize daily summary generator
     logger.info({ time: config.scheduler.summaryTime }, 'Initializing daily summary generator');

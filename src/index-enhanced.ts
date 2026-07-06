@@ -29,6 +29,7 @@ async function main() {
     const twilioWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER;
     const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
     const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+    const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const googleCredentials = process.env.GOOGLE_CREDENTIALS_PATH || './google-credentials.json';
     const googleSpreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
 
@@ -90,7 +91,7 @@ async function main() {
 
     // Initialize Razorpay client
     logger.info('Initializing Razorpay client');
-    const razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
+    const razorpayClient = new RazorpayClient(razorpayKeyId, razorpayKeySecret, razorpayWebhookSecret);
     logger.info('✓ Razorpay client initialized');
 
     // Initialize Voice Transcriber
@@ -142,7 +143,8 @@ async function main() {
       voiceTranscriber,
       whatsappBot,
       calendarManager,
-      languageDetector
+      languageDetector,
+      twilioAuthToken
     }, webhookPort);
 
     // Initialize daily summary generator
