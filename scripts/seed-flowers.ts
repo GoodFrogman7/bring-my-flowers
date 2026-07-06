@@ -45,6 +45,46 @@ const FLOWERS: FlowerSeed[] = [
   { name: 'Heliconia', class: 'PREMIUM', sticksPerBunch: 10, costPerBunch: 0, wastage: 0.1 }
 ];
 
+/**
+ * Pack recipes from the card. premium_spec mode 'pick_one' = the card's "OR"
+ * lines; 'combine' = Enchantment's single mixed premium arrangement. Packs
+ * not on the card (Delight, Bloom, Felicity, Charm…) stay manual until the
+ * owner supplies their counts — add them here when he does.
+ */
+const RECIPES: Array<{ name: string; seasonalStems: number; premium: object }> = [
+  {
+    name: 'bliss', seasonalStems: 16,
+    premium: { mode: 'pick_one', groups: [
+      { flowers: ['Asiatic', 'Sunflower'], stems: 3 },
+      { flowers: ['Spray Daisy', 'Orchid'], stems: 5 }
+    ] }
+  },
+  {
+    name: 'joy', seasonalStems: 22,
+    premium: { mode: 'pick_one', groups: [
+      { flowers: ['Asiatic', 'Sunflower', 'Eustoma', 'BOP'], stems: 4 },
+      { flowers: ['Spray Daisy', 'Orchid'], stems: 7 }
+    ] }
+  },
+  {
+    name: 'elation', seasonalStems: 32,
+    premium: { mode: 'pick_one', groups: [
+      { flowers: ['Asiatic', 'Sunflower', 'Eustoma', 'BOP'], stems: 6 },
+      { flowers: ['Spray Daisy', 'Orchid'], stems: 10 }
+    ] }
+  },
+  {
+    name: 'enchantment', seasonalStems: 60,
+    premium: { mode: 'combine', groups: [
+      { flowers: ['Asiatic', 'Sunflower', 'Eustoma', 'BOP'], stems: 11 },
+      { flowers: ['Anthurium', 'Heliconia'], stems: 6 },
+      { flowers: ['Oriental'], stems: 5 }
+      // 4th card line (Spray Daisy/Orchid ×18) omitted: the sheet has three
+      // Flower columns; Enchantment rows keep a manual touch until Phase D
+    ] }
+  }
+];
+
 const [dbPath = './data/business.db'] = process.argv.slice(2);
 const db = openDb(dbPath);
 
@@ -54,6 +94,13 @@ const insert = db.prepare(`
 for (const flower of FLOWERS) {
   insert.run(flower.name, flower.sticksPerBunch, flower.costPerBunch, flower.wastage, flower.class);
 }
+
+const insertRecipe = db.prepare(`
+  INSERT OR REPLACE INTO pack_recipes (package_name, seasonal_stems, premium_spec) VALUES (?, ?, ?)`);
+for (const recipe of RECIPES) {
+  insertRecipe.run(recipe.name, recipe.seasonalStems, JSON.stringify(recipe.premium));
+}
+console.log(`Seeded ${RECIPES.length} pack recipes: ${RECIPES.map(r => r.name).join(', ')}`);
 
 const rows = db.prepare(`SELECT name, class, cost_per_bunch FROM flowers ORDER BY class, name`).all() as
   Array<{ name: string; class: string; cost_per_bunch: number }>;

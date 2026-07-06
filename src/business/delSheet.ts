@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { BusinessDb } from './db';
 import { deliveryStatusString, PaymentStatus } from './parse';
+import { assignFlowers, buildProcurement, loadRecipes, loadFlowers, AssignedItem } from './assignment';
 import logger from '../utils/logger';
 
 /**
@@ -38,6 +39,9 @@ export interface DelSheetRow {
   /** Oldest → newest, up to 5 entries. */
   preFlowers: string[];
   collect: number | '';
+  /** Auto-assigned flowers (empty = manual, like today). */
+  assigned: AssignedItem[];
+  manualReason?: string;
 }
 
 export function dueRows(db: BusinessDb, date: string): DelSheetRow[] {
@@ -70,10 +74,19 @@ export function dueRows(db: BusinessDb, date: string): DelSheetRow[] {
     WHERE customer_id = ? AND date < ? AND flowers != ''
     ORDER BY date DESC LIMIT 5`);
 
+  const recipes = loadRecipes(db);
+  const flowers = loadFlowers(db);
+
   const rows: DelSheetRow[] = subscriptionRows.map(sub => {
     const restrictions = (restrictionsFor.all(sub.id) as Array<{ flower: string }>).map(r => r.flower).join(' n ');
     const pending = (pendingCyclesFor.get(sub.subscription_id) as { n: number }).n;
     const recent = (lastFive.all(sub.id, date) as Array<{ flowers: string }>).map(r => r.flowers);
+    const preFlowers = recent.reverse(); // oldest first → maps onto Pre Flowers 4..newest
+    const assignment = assignFlowers(
+      { packageName: sub.package_name, restrictions, preFlowers },
+      recipes,
+      flowers
+    );
     return {
       id: sub.id,
       name: sub.name,
@@ -89,8 +102,10 @@ export function dueRows(db: BusinessDb, date: string): DelSheetRow[] {
       restriction: restrictions,
       extraInstruction: sub.extra_instruction,
       statusString: deliveryStatusString(sub.seq, pending, sub.payment_status, sub.collect),
-      preFlowers: recent.reverse(), // oldest first → maps onto Pre Flowers 4..newest
-      collect: sub.payment_status === 'PENDING' && sub.collect > 0 ? sub.collect : ''
+      preFlowers,
+      collect: sub.payment_status === 'PENDING' && sub.collect > 0 ? sub.collect : '',
+      assigned: assignment.items,
+      manualReason: assignment.manualReason
     };
   });
 
@@ -121,17 +136,31 @@ export function dueRows(db: BusinessDb, date: string): DelSheetRow[] {
       extraInstruction: '',
       statusString: `1  del of this cycle   -  0-cycles pmnt   ${order.payment_status === 'COMPLETED' ? 'Completed' : 'Pending'} - Collect ${order.payment_status === 'COMPLETED' ? 0 : order.amount}`,
       preFlowers: [],
-      collect: order.payment_status === 'COMPLETED' ? '' : order.amount
+      collect: order.payment_status === 'COMPLETED' ? '' : order.amount,
+      // Bouquets are bespoke (customer's specific requirements) — always manual
+      assigned: [],
+      manualReason: 'one-time bouquet (bespoke)'
     });
   }
 
   return rows;
 }
 
+export interface DelSheetResult {
+  rows: number;
+  autoAssigned: number;
+  manual: Array<{ id: string; name: string; reason: string }>;
+}
+
 export function writeDelSheet(db: BusinessDb, date: string, outPath: string): number {
+  return writeDelSheetDetailed(db, date, outPath).rows;
+}
+
+export function writeDelSheetDetailed(db: BusinessDb, date: string, outPath: string): DelSheetResult {
   const rows = dueRows(db, date);
 
   const grid: unknown[][] = [DEL_SHEET_HEADERS as unknown as unknown[]];
+  const manual: DelSheetResult['manual'] = [];
   for (const row of rows) {
     // Pre Flowers columns run oldest (Pre Flowers 4) → newest (Pre Flowers)
     const pre = new Array<string>(5).fill('');
@@ -139,19 +168,43 @@ export function writeDelSheet(db: BusinessDb, date: string, outPath: string): nu
     for (let i = 0; i < recent.length; i++) {
       pre[5 - recent.length + i] = recent[i];
     }
+    // Flower 1-3 + stick pairs, auto-assigned where a recipe applies
+    const flowerCells = new Array<unknown>(6).fill('');
+    row.assigned.slice(0, 3).forEach((item, i) => {
+      flowerCells[i * 2] = item.flower;
+      flowerCells[i * 2 + 1] = item.sticks;
+    });
+    if (row.assigned.length === 0 && row.manualReason) {
+      manual.push({ id: row.id, name: row.name, reason: row.manualReason });
+    }
     grid.push([
       row.id, row.name, row.phones.replace(/\/\//g, ' // '), row.address, row.zone,
       row.day, row.timeSlot, row.pack, row.revenue, row.packageName,
       row.remarks, row.restriction, row.extraInstruction, row.statusString,
       pre[0], pre[1], pre[2], pre[3], pre[4],
-      '', '', '', '', '', '',   // Flower 1-3 + sticks (assigned by the owner / Phase C)
+      ...flowerCells,
       '', '', '', '', row.collect
     ]);
   }
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(grid), 'Sheet1');
+
+  // Procurement tab — the owner's Sheet2 "TO BUY" math over the auto-assigned rows
+  const procurement = buildProcurement(rows.map(row => row.assigned), loadFlowers(db));
+  const procurementGrid: unknown[][] = [
+    ['Flower', 'Sticks needed', 'Bunches to buy (incl. wastage)', 'Est. cost ₹'],
+    ...procurement.map(line => [line.flower, line.sticksNeeded, line.bunchesToBuy, line.estimatedCost]),
+    [],
+    ['TOTAL', '', '', procurement.reduce((sum, line) => sum + line.estimatedCost, 0)],
+    [],
+    ['Manual rows (assign by hand):'],
+    ...manual.map(entry => [`#${entry.id}`, entry.name, entry.reason])
+  ];
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(procurementGrid), 'Procurement');
+
   XLSX.writeFile(workbook, outPath);
-  logger.info({ date, rows: rows.length, outPath }, 'Delivery sheet generated');
-  return rows.length;
+  const autoAssigned = rows.length - manual.length;
+  logger.info({ date, rows: rows.length, autoAssigned, manual: manual.length, outPath }, 'Delivery sheet generated');
+  return { rows: rows.length, autoAssigned, manual };
 }

@@ -272,10 +272,19 @@ export function applyInstruction(
     }
 
     case 'RENEW': {
-      appendRemark(db, customer.id, 'Asked to renew', today);
+      // Lazily imported to avoid a module cycle (renewal.ts uses appendRemark)
+      const { createNextCycle } = require('./renewal') as typeof import('./renewal');
+      const renewal = createNextCycle(db, customer.id, today);
+      if (!renewal.ok) {
+        appendRemark(db, customer.id, 'Asked to renew', today);
+        return {
+          reply: `Wonderful! We'll set up your next cycle and send you the payment details shortly.${SIGNOFF}`,
+          ownerAlert: `🔁 RENEWAL: ${label} wants to renew but auto-creation said: ${renewal.message}`
+        };
+      }
       return {
-        reply: `Wonderful! We'll set up your next cycle and send you the payment details shortly.${SIGNOFF}`,
-        ownerAlert: `🔁 RENEWAL: ${label} wants to renew${subscription ? ` (${subscription.package_name} ₹${subscription.pack_amount})` : ''}. Reply "renew ${customer.id}" to create the cycle.`
+        reply: `Wonderful! Your subscription is renewed — first delivery on ${renewal.firstDelivery}. ${subscription ? `Kindly pay ₹${subscription.pack_amount} on this number.` : ''}${SIGNOFF}`,
+        ownerAlert: `🔁 RENEWED: ${label} — ${renewal.message}`
       };
     }
   }

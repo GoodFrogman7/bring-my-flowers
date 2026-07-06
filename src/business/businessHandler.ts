@@ -4,7 +4,8 @@ import { OllamaClient } from '../llm/ollama';
 import { parseInstruction, Instruction } from './instructions';
 import { applyInstruction, findCustomerByPhone, appendRemark, CustomerRecord } from './actions';
 import { buildPaymentMessages, renewalsDue } from './paymentRun';
-import { writeDelSheet, dueRows } from './delSheet';
+import { createNextCycle } from './renewal';
+import { writeDelSheetDetailed, dueRows } from './delSheet';
 import { todayIST, addDays } from './dates';
 import { samePhone } from '../utils/ids';
 import logger from '../utils/logger';
@@ -183,8 +184,11 @@ export class BusinessMessageHandler {
       case 'sheet': {
         const date = dateArg(parts[1]);
         const outPath = `${this.delSheetDir}/del-sheet-${date}.xlsx`;
-        const count = writeDelSheet(this.db, date, outPath);
-        return `📋 Delivery sheet for ${date}: ${count} rows → ${outPath}`;
+        const result = writeDelSheetDetailed(this.db, date, outPath);
+        const manualLine = result.manual.length > 0
+          ? `\n✍️ ${result.manual.length} manual: ${result.manual.slice(0, 8).map(m => `#${m.id}`).join(', ')}${result.manual.length > 8 ? '…' : ''}`
+          : '';
+        return `📋 Delivery sheet for ${date}: ${result.rows} rows, ${result.autoAssigned} auto-assigned${manualLine}\n→ ${outPath} (see Procurement tab for TO BUY)`;
       }
 
       case 'payrun': {
@@ -270,8 +274,8 @@ export class BusinessMessageHandler {
       case 'renew': {
         const customerId = parts[1];
         if (!customerId) return 'Usage: renew <customer-id>';
-        appendRemark(this.db, customerId, 'Renewal confirmed — set up next cycle', today);
-        return `🔁 Renewal noted for #${customerId}. (Automatic cycle creation lands in Phase C — set up dates in the Master for now.)`;
+        const renewal = createNextCycle(this.db, customerId, today);
+        return renewal.ok ? `🔁 #${customerId}: ${renewal.message}` : `⚠️ ${renewal.message}`;
       }
 
       case 'note': {

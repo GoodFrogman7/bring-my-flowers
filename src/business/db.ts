@@ -124,6 +124,15 @@ CREATE TABLE IF NOT EXISTS flowers (
   class TEXT NOT NULL DEFAULT 'SEASONAL'  -- SEASONAL | PREMIUM (pack card)
 );
 
+-- Per-pack composition from the official card (docs/assets/pack-card.jpeg).
+-- Keyed by package name: pack amounts collide (Corporate is also 4750).
+-- premium_spec JSON: {"mode":"pick_one"|"combine","groups":[{"flowers":[…],"stems":N},…]}
+CREATE TABLE IF NOT EXISTS pack_recipes (
+  package_name TEXT PRIMARY KEY,      -- lowercase
+  seasonal_stems INTEGER NOT NULL,
+  premium_spec TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS flower_price_history (
   flower TEXT NOT NULL,
   date TEXT NOT NULL,

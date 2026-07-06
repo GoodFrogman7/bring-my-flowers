@@ -142,6 +142,31 @@ Transport: Baileys by default — scan the QR with the **customer-care phone**
 and the bot answers on the number customers already use. `BUSINESS_TRANSPORT=twilio`
 switches to the webhook path. `BUSINESS_DB` overrides the datastore path.
 
+## Phase C implementation (done)
+
+Flower assignment + procurement (`assignment.ts`) and renewals (`renewal.ts`):
+
+- **Assignment engine**, applied automatically in every generated delivery
+  sheet: restrictions are absolute → weeks alternate seasonal/premium (read
+  from the customer's last logged delivery) → never repeat the last 5 flowers
+  (relaxes to last-2 before giving up; restrictions never relax) → cheapest
+  per stem wins. Flowers with unknown cost are never picked. Packs without a
+  recipe (Delight/Bloom/Felicity/Charm/Corporate/Customized/bouquets) stay
+  manual and are listed on the sheet's Procurement tab — recipes live in the
+  `pack_recipes` table, seeded from the card (`scripts/seed-flowers.ts`).
+- **Procurement tab** on every delivery sheet: sticks per flower → bunches
+  (wastage-inflated, rounded up) → estimated cost. Real 07-July run:
+  45 rows, 21 auto-assigned, ₹4,775 TO BUY estimate.
+- **Renewals**: a customer texting "renew" (or staff `renew <id>`) creates the
+  next cycle — 4 weekly deliveries on the fixed day, or 8 paired biweekly
+  (fixed day + 3 days) — payment PENDING with the full pack to collect.
+  Stacking is refused while planned deliveries remain.
+
+**Open question for the owner:** the card promises clean seasonal/premium
+alternation, but the June logs show he usually sends premium-accent +
+seasonal-base combos (e.g. "Sunflower ×3 + Glad ×11"). The engine follows the
+card; if he prefers his combo style, the recipes need a second per-week shape.
+
 ## Constraints to respect
 
 - The team (Pooja, Sanjay, 5 delivery boys) lives in these sheets. Any system must keep
