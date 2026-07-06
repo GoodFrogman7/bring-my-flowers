@@ -79,22 +79,57 @@ describe('classifyMessage', () => {
 });
 
 describe('extractOrderDetails', () => {
-  it('returns the extracted slots', async () => {
+  it('returns multiple line items with a date', async () => {
+    mockFetch.mockResolvedValue(ollamaReply(
+      '{"items": [{"flowers": "roses", "quantity": 5}, {"flowers": "tulips", "quantity": 3}], "quantity": null, "date": "2026-07-10"}'
+    ));
+
+    const extracted = await client().extractOrderDetails('5 roses and 3 tulips on july 10');
+
+    expect(extracted).toEqual({
+      items: [
+        { flowers: 'roses', quantity: 5 },
+        { flowers: 'tulips', quantity: 3 }
+      ],
+      quantity: null,
+      date: '2026-07-10'
+    });
+  });
+
+  it('coerces the legacy flat shape a small model may still return', async () => {
     mockFetch.mockResolvedValue(ollamaReply(
       '{"flowers": "lilies", "quantity": 5, "date": "2026-07-10"}'
     ));
 
     const extracted = await client().extractOrderDetails('5 lillies on july 10');
 
-    expect(extracted).toEqual({ flowers: 'lilies', quantity: 5, date: '2026-07-10' });
+    expect(extracted).toEqual({
+      items: [{ flowers: 'lilies', quantity: 5 }],
+      quantity: null,
+      date: '2026-07-10'
+    });
   });
 
-  it('normalizes missing fields to null', async () => {
-    mockFetch.mockResolvedValue(ollamaReply('{"flowers": "roses"}'));
+  it('keeps a bare quantity separate from line items', async () => {
+    mockFetch.mockResolvedValue(ollamaReply('{"items": [], "quantity": 10, "date": null}'));
+
+    const extracted = await client().extractOrderDetails('make it 10 instead');
+
+    expect(extracted).toEqual({ items: [], quantity: 10, date: null });
+  });
+
+  it('normalizes missing fields and drops malformed entries', async () => {
+    mockFetch.mockResolvedValue(ollamaReply(
+      '{"items": [{"flowers": "roses"}, {"quantity": 3}, "junk"], "date": "sometime"}'
+    ));
 
     const extracted = await client().extractOrderDetails('roses please');
 
-    expect(extracted).toEqual({ flowers: 'roses', quantity: null, date: null });
+    expect(extracted).toEqual({
+      items: [{ flowers: 'roses', quantity: null }],
+      quantity: null,
+      date: null
+    });
   });
 
   it('rejects when the response contains no JSON', async () => {

@@ -49,7 +49,7 @@ describe('order conversation flow', () => {
   it('starts a draft from an ORDER message and asks for the missing quantity', async () => {
     const { sender, ollama, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want roses');
 
@@ -62,7 +62,7 @@ describe('order conversation flow', () => {
   it('fills quantity from a bare-number reply without calling the LLM extractor', async () => {
     const { sender, ollama, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want roses');
     ollama.extractOrderDetails.mockClear();
@@ -76,42 +76,43 @@ describe('order conversation flow', () => {
   it('collects slots across messages and fulfills the completed order', async () => {
     const { ollama, fulfilled, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValueOnce({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValueOnce({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want roses');
     await handler.handleMessage(PHONE, '10');
 
-    ollama.extractOrderDetails.mockResolvedValueOnce({ flowers: null, quantity: null, date: '2099-07-06' });
+    ollama.extractOrderDetails.mockResolvedValueOnce({ items: [], quantity: null, date: '2099-07-06' });
     await handler.handleMessage(PHONE, 'tomorrow');
 
     expect(fulfilled).toHaveLength(1);
     expect(fulfilled[0]).toMatchObject({
       phone: PHONE,
-      quantity: 10,
       deliveryDate: '2099-07-06',
       totalPrice: 500
     });
-    expect(fulfilled[0].flower.item_name).toBe('Roses');
+    expect(fulfilled[0].items).toHaveLength(1);
+    expect(fulfilled[0].items[0].flower.item_name).toBe('Roses');
+    expect(fulfilled[0].items[0].quantity).toBe(10);
     expect(fulfilled[0].orderId).toMatch(/^ORD-/);
   });
 
   it('fulfills a one-shot message that contains every slot', async () => {
     const { ollama, fulfilled, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'rozes', quantity: 5, date: '2099-07-06' });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'rozes', quantity: 5 }], quantity: null, date: '2099-07-06' });
 
     await handler.handleMessage(PHONE, 'I want 5 rozes for the 6th');
 
     expect(fulfilled).toHaveLength(1);
     // Fuzzy match resolved the typo to the inventory name
-    expect(fulfilled[0].flower.item_name).toBe('Roses');
+    expect(fulfilled[0].items[0].flower.item_name).toBe('Roses');
     expect(fulfilled[0].totalPrice).toBe(250);
   });
 
   it('re-asks with the flower list when nothing in inventory matches', async () => {
     const { sender, ollama, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'sunflowers', quantity: 3, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'sunflowers', quantity: 3 }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want 3 sunflowers');
 
@@ -127,7 +128,7 @@ describe('order conversation flow', () => {
   it('re-asks when the requested quantity exceeds stock', async () => {
     const { ollama, handler, fulfilled } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'lilies', quantity: 50, date: '2099-07-06' });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'lilies', quantity: 50 }], quantity: null, date: '2099-07-06' });
 
     await handler.handleMessage(PHONE, '50 lilies please');
 
@@ -140,7 +141,7 @@ describe('order conversation flow', () => {
   it('aborts an in-flight draft on "never mind"', async () => {
     const { sender, ollama, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want roses');
     ollama.classifyMessage.mockClear();
@@ -155,10 +156,98 @@ describe('order conversation flow', () => {
   });
 });
 
+describe('multi-item orders', () => {
+  it('fulfills an order with two flowers in one message', async () => {
+    const { ollama, fulfilled, handler } = setup();
+    classifyAs(ollama, MessageIntent.ORDER);
+    ollama.extractOrderDetails.mockResolvedValue({
+      items: [{ flowers: 'roses', quantity: 5 }, { flowers: 'lillies', quantity: 3 }],
+      quantity: null,
+      date: '2099-07-06'
+    });
+
+    await handler.handleMessage(PHONE, '5 roses and 3 lillies for the 6th');
+
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0].items.map(i => `${i.quantity} ${i.flower.item_name}`)).toEqual(['5 Roses', '3 Lilies']);
+    expect(fulfilled[0].totalPrice).toBe(5 * 50 + 3 * 80);
+  });
+
+  it('asks for the quantity of the specific flower that lacks one', async () => {
+    const { sender, ollama, handler, fulfilled } = setup();
+    classifyAs(ollama, MessageIntent.ORDER);
+    ollama.extractOrderDetails.mockResolvedValueOnce({
+      items: [{ flowers: 'roses', quantity: 5 }, { flowers: 'lilies', quantity: null }],
+      quantity: null,
+      date: '2099-07-06'
+    });
+
+    await handler.handleMessage(PHONE, '5 roses and some lilies for the 6th');
+
+    expect(ollama.generateOrderResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'missing_quantity', matchedFlower: 'Lilies' })
+    );
+
+    // Bare number fills the lily line, completing the order
+    await handler.handleMessage(PHONE, '3');
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0].items[1]).toMatchObject({ quantity: 3 });
+  });
+
+  it('blocks the whole order when one line is out of stock', async () => {
+    const { ollama, handler, fulfilled } = setup();
+    classifyAs(ollama, MessageIntent.ORDER);
+    ollama.extractOrderDetails.mockResolvedValue({
+      items: [{ flowers: 'roses', quantity: 5 }, { flowers: 'lilies', quantity: 50 }],
+      quantity: null,
+      date: '2099-07-06'
+    });
+
+    await handler.handleMessage(PHONE, '5 roses and 50 lilies');
+
+    expect(ollama.generateOrderResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'low_stock', matchedFlower: 'Lilies', flowerStock: 5 })
+    );
+    expect(fulfilled).toHaveLength(0);
+  });
+
+  it('merges duplicate mentions of the same flower', async () => {
+    const { ollama, fulfilled, handler } = setup();
+    classifyAs(ollama, MessageIntent.ORDER);
+    ollama.extractOrderDetails.mockResolvedValue({
+      items: [{ flowers: 'roses', quantity: 5 }, { flowers: 'rose', quantity: 3 }],
+      quantity: null,
+      date: '2099-07-06'
+    });
+
+    await handler.handleMessage(PHONE, '5 roses and 3 more roses');
+
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0].items).toHaveLength(1);
+    expect(fulfilled[0].items[0]).toMatchObject({ quantity: 8 });
+  });
+
+  it('shows every line in the confirmation summary', async () => {
+    const { sender, ollama, handler } = setup({ confirmationRequired: true });
+    classifyAs(ollama, MessageIntent.ORDER);
+    ollama.extractOrderDetails.mockResolvedValue({
+      items: [{ flowers: 'roses', quantity: 5 }, { flowers: 'lilies', quantity: 3 }],
+      quantity: null,
+      date: '2099-07-06'
+    });
+
+    await handler.handleMessage(PHONE, '5 roses and 3 lilies for the 6th');
+
+    expect(sender.lastMessage()).toContain('5 Roses — ₹250');
+    expect(sender.lastMessage()).toContain('3 Lilies — ₹240');
+    expect(sender.lastMessage()).toContain('Total: ₹490');
+  });
+});
+
 describe('order confirmation', () => {
   async function driveToConfirmation(ctx: ReturnType<typeof setup>) {
     classifyAs(ctx.ollama, MessageIntent.ORDER);
-    ctx.ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: 10, date: '2099-07-06' });
+    ctx.ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: 10 }], quantity: null, date: '2099-07-06' });
     await ctx.handler.handleMessage(PHONE, 'I want 10 roses on the 6th');
   }
 
@@ -189,7 +278,7 @@ describe('order confirmation', () => {
     await driveToConfirmation(ctx);
 
     // "make it 5" re-extracts and produces an updated confirmation
-    ctx.ollama.extractOrderDetails.mockResolvedValue({ flowers: null, quantity: 5, date: null });
+    ctx.ollama.extractOrderDetails.mockResolvedValue({ items: [], quantity: 5, date: null });
     await ctx.handler.handleMessage(PHONE, 'make it 5 instead');
 
     expect(ctx.sender.lastMessage()).toContain('5 Roses — ₹250');
@@ -278,7 +367,7 @@ describe('robustness', () => {
   it('keeps the draft when LLM extraction fails and re-asks', async () => {
     const { sender, ollama, handler, fulfilled } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValueOnce({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValueOnce({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want roses');
 
@@ -293,7 +382,7 @@ describe('robustness', () => {
   it('clears the session and apologizes when handling blows up', async () => {
     const { store, sender, ollama, handler } = setup();
     classifyAs(ollama, MessageIntent.ORDER);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
     await handler.handleMessage(PHONE, 'I want roses');
 
     vi.spyOn(store, 'getAllInventory').mockRejectedValueOnce(new Error('sheet unreachable'));

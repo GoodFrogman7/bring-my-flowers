@@ -22,7 +22,9 @@ beforeEach(() => {
     fulfill: async ctx => {
       fulfilled.push(ctx);
       // Real fulfillments decrement stock; mirror that so shortage tests are honest
-      await store.updateInventory(ctx.flower.item_name, -ctx.quantity);
+      for (const item of ctx.items) {
+        await store.updateInventory(item.flower.item_name, -item.quantity);
+      }
     }
   };
 
@@ -45,10 +47,11 @@ describe('runRecurringOnce', () => {
     expect(fulfilled).toHaveLength(1);
     expect(fulfilled[0]).toMatchObject({
       phone: '+919876543210',
-      quantity: 10,
       deliveryDate: TODAY,
       totalPrice: 500
     });
+    expect(fulfilled[0].items[0]).toMatchObject({ quantity: 10 });
+    expect(fulfilled[0].items[0].flower.item_name).toBe('Roses');
     expect(fulfilled[0].orderId).toMatch(/^ORD-/);
     expect(store.recurring[0].next_date).toBe('2026-07-13');
   });
@@ -108,6 +111,29 @@ describe('runRecurringOnce', () => {
 
     expect(result).toEqual({ created: 0, skipped: 1 });
     expect(store.recurring[0].next_date).toBe(TODAY);
+  });
+
+  it('materializes a multi-item subscription, repricing from current inventory', async () => {
+    store.inventory.push(rose({ item_name: 'Lilies', quantity: 20, unit_price: 80 }));
+    store.recurring.push(recurring({ items: '5 Roses, 3 Lilies', quantity: 8, next_date: TODAY }));
+
+    const result = await scheduler.runRecurringOnce(TODAY);
+
+    expect(result).toEqual({ created: 1, skipped: 0 });
+    expect(fulfilled[0].items.map(i => `${i.quantity} ${i.flower.item_name}`)).toEqual(['5 Roses', '3 Lilies']);
+    expect(fulfilled[0].totalPrice).toBe(5 * 50 + 3 * 80);
+  });
+
+  it('skips a multi-item cycle when any single line is short', async () => {
+    store.inventory.push(rose({ item_name: 'Lilies', quantity: 2, unit_price: 80 }));
+    store.recurring.push(recurring({ items: '5 Roses, 3 Lilies', quantity: 8, next_date: TODAY }));
+
+    const result = await scheduler.runRecurringOnce(TODAY);
+
+    expect(result).toEqual({ created: 0, skipped: 1 });
+    expect(fulfilled).toHaveLength(0);
+    const ownerMsg = sender.sent.find(m => m.to === OWNER);
+    expect(ownerMsg?.message).toContain('Lilies: need 3, have 2');
   });
 
   it('processes multiple due subscriptions independently', async () => {

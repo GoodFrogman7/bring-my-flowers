@@ -42,8 +42,8 @@ For Twilio and enhanced mode setup (Twilio sandbox, ngrok, Google Cloud, Razorpa
 
 ## What it handles
 
-- **Orders** — "I want 5 roses for tomorrow" starts a conversation that collects flower, quantity, and date across messages, fuzzy-matches against inventory, checks stock, and asks for confirmation. In enhanced mode the customer gets a Razorpay payment link (24h expiry; unpaid orders are cancelled and stock returned).
-- **Subscriptions** — "10 roses every Monday" creates a recurring order. Each morning the bot materializes due subscriptions into real orders (with a fresh payment link per cycle in enhanced mode), skipping and alerting owners when stock is short. Customers can pause, resume, or cancel by message.
+- **Orders** — "5 roses and 3 lilies for tomorrow" starts a conversation that collects each flower, its quantity, and the date across messages, fuzzy-matches against inventory, checks stock per line, and asks for confirmation with an itemized summary. In enhanced mode the customer gets a Razorpay payment link (24h expiry; unpaid orders are cancelled and stock returned per item).
+- **Subscriptions** — "10 roses every Monday" (or a multi-flower bouquet) creates a recurring order. Each morning the bot materializes due subscriptions into real orders (with a fresh payment link per cycle in enhanced mode), skipping and alerting owners when any line is short on stock. Customers can pause, resume, or cancel by message.
 - **Cancellations** — "No delivery today" cancels the customer's upcoming order, returns stock, and notifies the delivery person.
 - **Reschedules** — "Deliver on Monday instead" moves the upcoming order.
 - **Inquiries** — "Do you have lilies?" answered from live inventory.
@@ -102,7 +102,6 @@ More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) 
 
 ## Known limitations
 
-- One flower type per order or subscription (multi-item orders are planned).
 - Enhanced mode reserves stock when the payment link is created; the link's 24h expiry webhook returns it.
 - Google Sheets mode does not track per-delivery-person assignments (delivery methods are no-ops).
 

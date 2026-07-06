@@ -7,6 +7,7 @@ import { responses, formatResponse, Language } from '../i18n/languageDetector';
 import { findBestFlowerMatch } from '../utils/fuzzyMatch';
 import { samePhone } from '../utils/ids';
 import { nextOccurrence, describeSchedule } from '../utils/recurrence';
+import { parseItems, displayItems } from '../utils/orderItems';
 import logger from '../utils/logger';
 
 export interface OwnerCommandOptions {
@@ -50,7 +51,7 @@ function customerLanguage(order: Order): Language {
 }
 
 function describeOrder(order: Order): string {
-  return `${order.order_id} — ${order.quantity} ${order.items}, ₹${order.amount}\n  ${order.date} · ${order.status} · ${order.customer_phone}${order.notes ? `\n  📝 ${order.notes}` : ''}`;
+  return `${order.order_id} — ${displayItems(order.items, order.quantity)}, ₹${order.amount}\n  ${order.date} · ${order.status} · ${order.customer_phone}${order.notes ? `\n  📝 ${order.notes}` : ''}`;
 }
 
 /**
@@ -212,9 +213,8 @@ export class OwnerCommandHandler {
 
     await this.options.dataStore.updateOrderStatus(orderId, 'CANCELED', reason);
     if (returnStock) {
-      const itemNames = order.items.split(',').map(item => item.trim());
-      for (const itemName of itemNames) {
-        await this.options.dataStore.updateInventory(itemName, order.quantity);
+      for (const item of parseItems(order.items, order.quantity)) {
+        await this.options.dataStore.updateInventory(item.name, item.quantity);
       }
     }
 
@@ -223,7 +223,7 @@ export class OwnerCommandHandler {
       formatResponse(responses.order_canceled[customerLanguage(order)], { orderId })
     );
 
-    return `🛑 ${orderId} cancelled (${reason}).${returnStock ? ` Stock returned: ${order.quantity} ${order.items}.` : ''} Customer notified.`;
+    return `🛑 ${orderId} cancelled (${reason}).${returnStock ? ` Stock returned: ${displayItems(order.items, order.quantity)}.` : ''} Customer notified.`;
   }
 
   // ---- Stock ----------------------------------------------------------------
@@ -281,7 +281,7 @@ export class OwnerCommandHandler {
       const live = all.filter(r => r.status !== 'CANCELLED');
       if (live.length === 0) return '🔁 No subscriptions.';
       const lines = live.map(r =>
-        `${r.recurring_id} — ${r.quantity} ${r.items} ${describeSchedule(r.frequency, r.day)}\n  ${r.status} · next ${r.next_date} · ${r.customer_phone}`
+        `${r.recurring_id} — ${displayItems(r.items, r.quantity)} ${describeSchedule(r.frequency, r.day)}\n  ${r.status} · next ${r.next_date} · ${r.customer_phone}`
       );
       return `🔁 Subscriptions\n\n${lines.join('\n\n')}`;
     }

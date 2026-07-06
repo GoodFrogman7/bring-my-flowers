@@ -4,17 +4,27 @@ import { OllamaClient } from '../llm/ollama';
 import { RazorpayClient } from '../payment/razorpayClient';
 import { InventoryItem } from '../types';
 import { responses, formatResponse, Language } from '../i18n/languageDetector';
+import { serializeItems, totalQuantity } from '../utils/orderItems';
 import logger from '../utils/logger';
+
+export interface FulfillmentItem {
+  flower: InventoryItem;
+  quantity: number;
+}
 
 export interface FulfillmentContext {
   phone: string;
   orderId: string;
-  flower: InventoryItem;
-  quantity: number;
+  /** One entry per flower type; every quantity is resolved and stock-checked. */
+  items: FulfillmentItem[];
   /** YYYY-MM-DD */
   deliveryDate: string;
   totalPrice: number;
   language: Language;
+}
+
+function itemSpecs(ctx: FulfillmentContext) {
+  return ctx.items.map(item => ({ name: item.flower.item_name, quantity: item.quantity }));
 }
 
 /**
@@ -35,13 +45,16 @@ export class DirectOrderFulfillment implements OrderFulfillment {
   ) {}
 
   async fulfill(ctx: FulfillmentContext): Promise<void> {
+    const specs = itemSpecs(ctx);
+    const itemsDescription = serializeItems(specs);
+
     await this.dataStore.addOrder({
       order_id: ctx.orderId,
       customer_id: `CUST-${ctx.phone.slice(-4)}`,
       customer_name: 'Customer',
       customer_phone: ctx.phone,
-      items: ctx.flower.item_name,
-      quantity: ctx.quantity,
+      items: itemsDescription,
+      quantity: totalQuantity(specs),
       amount: ctx.totalPrice,
       date: ctx.deliveryDate,
       status: 'CONFIRMED',
@@ -49,14 +62,15 @@ export class DirectOrderFulfillment implements OrderFulfillment {
       language: ctx.language
     });
 
-    await this.dataStore.updateInventory(ctx.flower.item_name, -ctx.quantity);
+    for (const item of ctx.items) {
+      await this.dataStore.updateInventory(item.flower.item_name, -item.quantity);
+    }
 
     let confirmation: string;
     try {
       confirmation = await this.ollamaClient.generateOrderConfirmation({
         orderId: ctx.orderId,
-        flowers: ctx.flower.item_name,
-        quantity: ctx.quantity,
+        items: itemsDescription,
         price: ctx.totalPrice,
         deliveryDate: ctx.deliveryDate
       });
@@ -72,8 +86,7 @@ export class DirectOrderFulfillment implements OrderFulfillment {
     logger.info({
       order_id: ctx.orderId,
       phone: ctx.phone,
-      flowers: ctx.flower.item_name,
-      quantity: ctx.quantity,
+      items: itemsDescription,
       amount: ctx.totalPrice,
       delivery_date: ctx.deliveryDate
     }, 'Order created (direct fulfillment)');
@@ -94,7 +107,8 @@ export class PaymentLinkFulfillment implements OrderFulfillment {
 
   async fulfill(ctx: FulfillmentContext): Promise<void> {
     const customerName = `Customer ${ctx.phone.slice(-4)}`;
-    const itemsDescription = `${ctx.quantity} ${ctx.flower.item_name}`;
+    const specs = itemSpecs(ctx);
+    const itemsDescription = serializeItems(specs);
 
     const paymentLink = await this.razorpayClient.createPaymentLink({
       amount: ctx.totalPrice,
@@ -109,8 +123,8 @@ export class PaymentLinkFulfillment implements OrderFulfillment {
       customer_id: `CUST-${ctx.phone.slice(-4)}`,
       customer_name: customerName,
       customer_phone: ctx.phone,
-      items: ctx.flower.item_name,
-      quantity: ctx.quantity,
+      items: itemsDescription,
+      quantity: totalQuantity(specs),
       amount: ctx.totalPrice,
       date: ctx.deliveryDate,
       status: 'PENDING_PAYMENT',
@@ -120,7 +134,9 @@ export class PaymentLinkFulfillment implements OrderFulfillment {
       language: ctx.language
     });
 
-    await this.dataStore.updateInventory(ctx.flower.item_name, -ctx.quantity);
+    for (const item of ctx.items) {
+      await this.dataStore.updateInventory(item.flower.item_name, -item.quantity);
+    }
 
     const paymentMessage = formatResponse(responses.payment_link[ctx.language], {
       link: paymentLink.short_url,

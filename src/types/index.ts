@@ -67,7 +67,12 @@ export interface Order {
   /** Delivery date, YYYY-MM-DD */
   date: string;
   status: OrderStatus;
+  /**
+   * Line items encoded as "5 Roses, 3 Lilies" (see utils/orderItems.ts).
+   * Legacy rows hold a bare flower name with the count in `quantity`.
+   */
   items: string;
+  /** Total units across all line items. */
   quantity: number;
   amount: number;
   delivery_boy?: string;

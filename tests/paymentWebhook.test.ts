@@ -118,6 +118,23 @@ describe('POST /webhook/payment', () => {
     expect(sender.lastMessage()).toContain('expired');
   });
 
+  it('returns per-item stock for a multi-item order on expiry', async () => {
+    store.inventory.push(rose({ quantity: 90 }));
+    store.inventory.push(rose({ item_name: 'Lilies', quantity: 17 }));
+    store.orders.push(order({
+      order_id: 'ORD-9',
+      status: 'PENDING_PAYMENT',
+      items: '10 Roses, 3 Lilies',
+      quantity: 13
+    }));
+
+    const res = await postPayment(paymentEvent('payment_link.expired', 'ORD-9'));
+
+    expect(res.status).toBe(200);
+    expect(store.inventory[0].quantity).toBe(100);
+    expect(store.inventory[1].quantity).toBe(20);
+  });
+
   it('ignores expiry for an order that is no longer pending payment', async () => {
     store.inventory.push(rose({ quantity: 90 }));
     store.orders.push(order({ order_id: 'ORD-9', status: 'CONFIRMED', items: 'Roses', quantity: 10 }));

@@ -8,6 +8,7 @@ import { RazorpayClient } from './payment/razorpayClient';
 import { VoiceTranscriber } from './voice/transcriber';
 import { CalendarManager } from './calendar/calendarManager';
 import { twilioSignatureValidator } from './utils/twilioSignature';
+import { parseItems } from './utils/orderItems';
 
 /** Voice-call ordering routes (enhanced mode). */
 export interface VoiceComponents {
@@ -216,9 +217,8 @@ export function createServer(components: ServerComponents, port: number = 3000) 
               event === 'payment_link.expired' ? 'Payment link expired' : 'Payment link cancelled'
             );
 
-            const itemNames = order.items.split(',').map(item => item.trim());
-            for (const itemName of itemNames) {
-              await payment.dataStore.updateInventory(itemName, order.quantity);
+            for (const item of parseItems(order.items, order.quantity)) {
+              await payment.dataStore.updateInventory(item.name, item.quantity);
             }
 
             await payment.whatsappBot.sendMessage(

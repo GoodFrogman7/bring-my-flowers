@@ -2,6 +2,7 @@ import * as cron from 'node-cron';
 import { OllamaClient } from '../llm/ollama';
 import { DataStore } from '../data/dataStore';
 import { MessageSender } from '../bot/messageSender';
+import { parseItems } from '../utils/orderItems';
 import logger from '../utils/logger';
 import { DailySummary } from '../types';
 
@@ -81,16 +82,15 @@ export class DailySummaryGenerator {
       const inventoryUsed: Array<{ item: string; quantity: number }> = [];
       const inventoryUsageMap = new Map<string, number>();
 
-      // Track inventory usage
+      // Track inventory usage per line item
       for (const order of dayOrders.filter(o => o.status === 'DELIVERED')) {
-        const itemNames = order.items.split(',').map(item => item.trim());
-        for (const itemName of itemNames) {
-          const current = inventoryUsageMap.get(itemName.toLowerCase()) || 0;
-          inventoryUsageMap.set(itemName.toLowerCase(), current + order.quantity);
+        for (const item of parseItems(order.items, order.quantity)) {
+          const key = item.name.toLowerCase();
+          inventoryUsageMap.set(key, (inventoryUsageMap.get(key) || 0) + item.quantity);
 
-          const inventoryItem = inventoryMap.get(itemName.toLowerCase());
+          const inventoryItem = inventoryMap.get(key);
           if (inventoryItem) {
-            totalCosts += inventoryItem.cost_price * order.quantity;
+            totalCosts += inventoryItem.cost_price * item.quantity;
           }
         }
       }

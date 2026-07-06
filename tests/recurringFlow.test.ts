@@ -70,7 +70,7 @@ describe('subscription creation flow', () => {
   it('creates a weekly subscription from a complete message after confirmation', async () => {
     const { store, sender, ollama, handler } = setup();
     classifyRecurring(ollama);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: 10, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: 10 }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want 10 roses every monday');
 
@@ -83,7 +83,7 @@ describe('subscription creation flow', () => {
     expect(store.recurring).toHaveLength(1);
     expect(store.recurring[0]).toMatchObject({
       customer_phone: PHONE,
-      items: 'Roses',
+      items: '10 Roses',
       quantity: 10,
       frequency: 'WEEKLY',
       day: 1,
@@ -98,7 +98,7 @@ describe('subscription creation flow', () => {
   it('asks for the weekday when the cadence has no day, then parses the answer locally', async () => {
     const { store, sender, ollama, handler } = setup();
     classifyRecurring(ollama);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: 5, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: 5 }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, '5 roses every week');
     expect(sender.lastMessage()).toContain('Which day');
@@ -116,7 +116,7 @@ describe('subscription creation flow', () => {
   it('collects quantity first, then the day of month for monthly subscriptions', async () => {
     const { store, sender, ollama, handler } = setup();
     classifyRecurring(ollama);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: null, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: null }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'roses every month');
     expect(sender.lastMessage()).toBe('ask:missing_quantity');
@@ -134,7 +134,7 @@ describe('subscription creation flow', () => {
   it('NO at confirmation abandons the subscription', async () => {
     const { store, ollama, handler } = setup();
     classifyRecurring(ollama);
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: 10, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: 10 }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, '10 roses every monday');
     await handler.handleMessage(PHONE, 'no');
@@ -147,7 +147,7 @@ describe('subscription creation flow', () => {
     ollama.classifyMessage.mockResolvedValue({
       intent: MessageIntent.ORDER, customer_phone: PHONE, confidence: 0.9
     });
-    ollama.extractOrderDetails.mockResolvedValue({ flowers: 'roses', quantity: 10, date: null });
+    ollama.extractOrderDetails.mockResolvedValue({ items: [{ flowers: 'roses', quantity: 10 }], quantity: null, date: null });
 
     await handler.handleMessage(PHONE, 'I want 10 roses');
     expect(sender.lastMessage()).toBe('ask:missing_date');

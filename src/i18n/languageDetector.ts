@@ -105,10 +105,10 @@ export const responses = {
   },
 
   recurring_created: {
-    en: "🔁 Subscription confirmed!\n{quantity} {items}, {schedule} — ₹{amount} per delivery.\nFirst delivery: {date}\n\nReply \"pause subscription\" or \"cancel subscription\" anytime.",
-    ar: "🔁 تم تأكيد الاشتراك!\n{quantity} {items}، {schedule} — ₹{amount} لكل توصيلة.\nأول توصيل: {date}\n\nأرسل \"إيقاف الاشتراك\" أو \"إلغاء الاشتراك\" في أي وقت.",
-    hi: "🔁 सब्सक्रिप्शन कन्फर्म!\n{quantity} {items}, {schedule} — ₹{amount} प्रति डिलीवरी।\nपहली डिलीवरी: {date}\n\nकभी भी \"pause subscription\" या \"cancel subscription\" लिखें।",
-    ur: "🔁 سبسکرپشن کنفرم!\n{quantity} {items}، {schedule} — ₹{amount} فی ڈیلیوری۔\nپہلی ڈیلیوری: {date}\n\nکسی بھی وقت \"pause subscription\" یا \"cancel subscription\" لکھیں۔"
+    en: "🔁 Subscription confirmed!\n{items}, {schedule} — ₹{amount} per delivery.\nFirst delivery: {date}\n\nReply \"pause subscription\" or \"cancel subscription\" anytime.",
+    ar: "🔁 تم تأكيد الاشتراك!\n{items}، {schedule} — ₹{amount} لكل توصيلة.\nأول توصيل: {date}\n\nأرسل \"إيقاف الاشتراك\" أو \"إلغاء الاشتراك\" في أي وقت.",
+    hi: "🔁 सब्सक्रिप्शन कन्फर्म!\n{items}, {schedule} — ₹{amount} प्रति डिलीवरी।\nपहली डिलीवरी: {date}\n\nकभी भी \"pause subscription\" या \"cancel subscription\" लिखें।",
+    ur: "🔁 سبسکرپشن کنفرم!\n{items}، {schedule} — ₹{amount} فی ڈیلیوری۔\nپہلی ڈیلیوری: {date}\n\nکسی بھی وقت \"pause subscription\" یا \"cancel subscription\" لکھیں۔"
   },
 
   recurring_paused: {
@@ -133,10 +133,10 @@ export const responses = {
   },
 
   recurring_skipped_stock: {
-    en: "😔 We couldn't prepare your recurring delivery of {quantity} {items} today — not enough stock. We've alerted the shop and your next delivery is {date}. Sorry!",
-    ar: "😔 لم نتمكن من تجهيز توصيلتك الدورية ({quantity} {items}) اليوم — المخزون غير كافٍ. تم إبلاغ المتجر، وتوصيلتك القادمة {date}. نعتذر!",
-    hi: "😔 स्टॉक कम होने से आज आपकी नियमित डिलीवरी ({quantity} {items}) तैयार नहीं हो सकी। दुकान को सूचित कर दिया गया है, अगली डिलीवरी {date} को होगी। क्षमा करें!",
-    ur: "😔 اسٹاک کم ہونے کی وجہ سے آج آپ کی باقاعدہ ڈیلیوری ({quantity} {items}) تیار نہیں ہو سکی۔ دکان کو اطلاع دے دی گئی ہے، اگلی ڈیلیوری {date} کو ہوگی۔ معذرت!"
+    en: "😔 We couldn't prepare your recurring delivery of {items} today — not enough stock. We've alerted the shop and your next delivery is {date}. Sorry!",
+    ar: "😔 لم نتمكن من تجهيز توصيلتك الدورية ({items}) اليوم — المخزون غير كافٍ. تم إبلاغ المتجر، وتوصيلتك القادمة {date}. نعتذر!",
+    hi: "😔 स्टॉक कम होने से आज आपकी नियमित डिलीवरी ({items}) तैयार नहीं हो सकी। दुकान को सूचित कर दिया गया है, अगली डिलीवरी {date} को होगी। क्षमा करें!",
+    ur: "😔 اسٹاک کم ہونے کی وجہ سے آج آپ کی باقاعدہ ڈیلیوری ({items}) تیار نہیں ہو سکی۔ دکان کو اطلاع دے دی گئی ہے، اگلی ڈیلیوری {date} کو ہوگی۔ معذرت!"
   }
 };
 

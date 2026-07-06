@@ -6,6 +6,7 @@ import { OrderFulfillment } from '../handlers/orderFulfillment';
 import { RecurringOrder } from '../types';
 import { responses, formatResponse, Language } from '../i18n/languageDetector';
 import { nextOccurrence } from '../utils/recurrence';
+import { parseItems, displayItems } from '../utils/orderItems';
 import { generateOrderId } from '../utils/ids';
 import logger from '../utils/logger';
 
@@ -81,30 +82,39 @@ export class DailyOpsScheduler {
       const nextDate = nextOccurrence(sub.frequency, sub.day, today);
       try {
         const inventory = await dataStore.getAllInventory();
-        const flower = inventory.find(i => i.item_name.toLowerCase() === sub.items.toLowerCase());
 
-        if (!flower || flower.quantity < sub.quantity) {
+        // Every line item must be available or the whole cycle is skipped —
+        // partial bouquet deliveries would surprise the customer.
+        const lines = parseItems(sub.items, sub.quantity).map(spec => ({
+          spec,
+          flower: inventory.find(i => i.item_name.toLowerCase() === spec.name.toLowerCase())
+        }));
+        const shortages = lines
+          .filter(line => !line.flower || line.flower.quantity < line.spec.quantity)
+          .map(line => `${line.spec.name}: need ${line.spec.quantity}, have ${line.flower?.quantity ?? 0}`);
+
+        if (lines.length === 0 || shortages.length > 0) {
           skipped++;
           logger.warn({
             recurring_id: sub.recurring_id,
-            item: sub.items,
-            requested: sub.quantity,
-            available: flower?.quantity ?? 0
+            items: sub.items,
+            shortages
           }, 'Recurring order skipped: insufficient stock');
 
-          await this.notifySkipped(sub, nextDate, flower?.quantity ?? 0);
+          await this.notifySkipped(sub, nextDate, shortages.join('\n'));
           await dataStore.updateRecurringOrder(sub.recurring_id, { next_date: nextDate });
           continue;
         }
 
+        const items = lines.map(line => ({ flower: line.flower!, quantity: line.spec.quantity }));
         await fulfillment.fulfill({
           phone: sub.customer_phone,
           orderId: generateOrderId(),
-          flower,
-          quantity: sub.quantity,
+          items,
           // If the bot was down past the scheduled date, deliver today
           deliveryDate: sub.next_date > today ? sub.next_date : today,
-          totalPrice: sub.quantity * flower.unit_price,
+          // Reprice each cycle from current unit prices
+          totalPrice: items.reduce((sum, item) => sum + item.quantity * item.flower.unit_price, 0),
           language: (sub.language || 'en') as Language
         });
 
@@ -124,18 +134,17 @@ export class DailyOpsScheduler {
     return { created, skipped };
   }
 
-  private async notifySkipped(sub: RecurringOrder, nextDate: string, available: number): Promise<void> {
+  private async notifySkipped(sub: RecurringOrder, nextDate: string, shortages: string): Promise<void> {
     const lang = (sub.language || 'en') as Language;
     await this.options.notifier.sendCustomMessage(
       sub.customer_phone,
       formatResponse(responses.recurring_skipped_stock[lang], {
-        quantity: sub.quantity,
-        items: sub.items,
+        items: displayItems(sub.items, sub.quantity),
         date: nextDate
       })
     );
 
-    const ownerAlert = `⚠️ Recurring order SKIPPED — not enough stock\n\n${sub.recurring_id}: ${sub.quantity} ${sub.items} for ${sub.customer_phone}\nIn stock: ${available}\n\nRestock and use "recurring run" to retry, or contact the customer.`;
+    const ownerAlert = `⚠️ Recurring order SKIPPED — not enough stock\n\n${sub.recurring_id}: ${displayItems(sub.items, sub.quantity)} for ${sub.customer_phone}\n${shortages}\n\nRestock and use "recurring run" to retry, or contact the customer.`;
     await this.options.ownerSender.sendMessageToMultiple(this.options.owners, ownerAlert);
   }
 

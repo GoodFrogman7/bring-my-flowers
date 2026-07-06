@@ -1,5 +1,6 @@
 import { DataStore } from '../../data/dataStore';
 import { DeliveryNotifier } from '../../notifications/deliveryNotifier';
+import { parseItems } from '../../utils/orderItems';
 import logger from '../../utils/logger';
 
 export async function cancelDelivery(
@@ -24,11 +25,10 @@ export async function cancelDelivery(
     const notes = reason || 'Customer requested cancellation';
     await dataStore.updateOrderStatus(order.order_id, 'CANCELED', notes);
 
-    // Return items to inventory (parse items from order)
-    // Assuming items format is like "Roses" or "Roses, Lilies"
-    const itemNames = order.items.split(',').map(item => item.trim());
-    for (const itemName of itemNames) {
-      await dataStore.updateInventory(itemName, order.quantity);
+    // Return each line item to inventory ("5 Roses, 3 Lilies"; legacy rows
+    // hold a bare name with the count in the quantity column)
+    for (const item of parseItems(order.items, order.quantity)) {
+      await dataStore.updateInventory(item.name, item.quantity);
     }
 
     // Find and update delivery

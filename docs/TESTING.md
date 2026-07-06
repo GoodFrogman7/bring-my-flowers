@@ -10,6 +10,7 @@ npm run test:watch   # watch mode
 The suite lives in `tests/` and mocks the LLM (`OllamaClient`), storage, and messaging — no Ollama, Twilio, or network access is needed. Coverage:
 
 - `orderSession` — quantity parsing ("10", "a dozen"), session TTL expiry
+- `orderItems` — line-item encoding ("5 Roses, 3 Lilies") round-trip and legacy-row fallback
 - `fuzzyMatch` — typos ("rozes"), plurals ("lilies" → "Lily"), thresholds
 - `messageHandler` — intent routing, the full multi-turn order flow (missing slots, low stock, no match, confirmation YES/NO, abort), rate limiting, error recovery
 - `recurringFlow` — subscription creation conversation, day collection, pause/resume/cancel management, owner-vs-customer routing
@@ -38,6 +39,7 @@ Send these from a phone connected to your bot (sandbox-joined for Twilio modes):
 | Send | Expect |
 |------|--------|
 | `I want 5 roses for tomorrow` | Order summary + confirmation prompt (or payment link in enhanced mode) |
+| `5 roses and 3 lilies for tomorrow` | Itemized summary with per-line prices and a total |
 | `I want roses` → `5` → `tomorrow` | Same, collected across messages |
 | `nevermind` (mid-order) | Order draft cleared |
 | `10 roses every Monday` → `yes` | Subscription created with first-delivery date |

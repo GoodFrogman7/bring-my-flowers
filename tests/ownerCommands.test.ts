@@ -109,6 +109,17 @@ describe('order lifecycle commands', () => {
     expect(ownerReply()).toContain('Stock returned');
   });
 
+  it('cancel returns per-item stock for multi-item orders', async () => {
+    store.inventory.push(rose({ item_name: 'Lilies', quantity: 10 }));
+    store.orders.push(order({ order_id: 'ORD-1', status: 'CONFIRMED', items: '5 Roses, 3 Lilies', quantity: 8 }));
+
+    await handler.handle(OWNER, 'cancel ORD-1');
+
+    expect(store.inventory[0].quantity).toBe(105);
+    expect(store.inventory[1].quantity).toBe(13);
+    expect(ownerReply()).toContain('5 Roses, 3 Lilies');
+  });
+
   it('cancel refuses delivered orders and does not touch stock', async () => {
     store.orders.push(order({ order_id: 'ORD-1', status: 'DELIVERED' }));
 

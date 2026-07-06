@@ -2,14 +2,21 @@ import { Language } from '../i18n/languageDetector';
 import { RecurrenceSpec } from '../utils/recurrence';
 import logger from '../utils/logger';
 
+/** One requested flower; name becomes the exact inventory name once matched. */
+export interface DraftItem {
+  name: string;
+  quantity: number | null;
+}
+
 /**
  * A partially-collected order. Slots fill across messages until the draft is
  * complete, then the customer confirms and the order is fulfilled.
  */
 export interface OrderDraft {
-  /** Flower name; once fuzzy-matched this holds the exact inventory name. */
-  flowers: string | null;
-  quantity: number | null;
+  /** Requested line items — one entry per flower type. */
+  items: DraftItem[];
+  /** A quantity mentioned before any flower was named ("10 please"). */
+  pendingQuantity: number | null;
   /** Delivery date, YYYY-MM-DD. Unused when the draft is a subscription. */
   date: string | null;
   /** Set when the customer asked for a subscription instead of a one-off order. */

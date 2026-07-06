@@ -2,6 +2,58 @@ import fetch from 'node-fetch';
 import logger from '../utils/logger';
 import { MessageIntent, ParsedMessage, OllamaResponse } from '../types';
 
+export interface ExtractedOrderItem {
+  flowers: string;
+  quantity: number | null;
+}
+
+export interface ExtractedOrderDetails {
+  items: ExtractedOrderItem[];
+  /** Bare quantity mentioned with no flower ("make it 10"); null otherwise. */
+  quantity: number | null;
+  date: string | null;
+}
+
+function positiveIntOrNull(value: unknown): number | null {
+  const n = typeof value === 'string' ? parseInt(value, 10) : value;
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+/**
+ * Normalize whatever shape the model returned into ExtractedOrderDetails.
+ * Small local models sometimes ignore schema changes and answer with the old
+ * flat {"flowers", "quantity"} form — accept that too.
+ */
+export function coerceExtractedOrder(raw: Record<string, unknown>): ExtractedOrderDetails {
+  const items: ExtractedOrderItem[] = [];
+
+  if (Array.isArray(raw.items)) {
+    for (const entry of raw.items) {
+      if (!entry || typeof entry !== 'object') continue;
+      const candidate = entry as Record<string, unknown>;
+      const name = typeof candidate.flowers === 'string' && candidate.flowers.trim()
+        ? candidate.flowers.trim()
+        : typeof candidate.flower_type === 'string' && candidate.flower_type.trim()
+          ? candidate.flower_type.trim()
+          : null;
+      if (name && name.toLowerCase() !== 'null') {
+        items.push({ flowers: name, quantity: positiveIntOrNull(candidate.quantity) });
+      }
+    }
+  }
+
+  // Legacy flat shape
+  if (items.length === 0 && typeof raw.flowers === 'string' && raw.flowers.trim() && raw.flowers.toLowerCase() !== 'null') {
+    items.push({ flowers: raw.flowers.trim(), quantity: positiveIntOrNull(raw.quantity) });
+  }
+
+  return {
+    items,
+    quantity: items.length === 0 ? positiveIntOrNull(raw.quantity) : null,
+    date: typeof raw.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : null
+  };
+}
+
 export class OllamaClient {
   private endpoint: string;
   private model: string;
@@ -64,14 +116,12 @@ export class OllamaClient {
   }
 
   /**
-   * Enhanced date extraction with better natural language understanding
+   * Extract order line items and a delivery date from natural language.
+   * `items` holds every flower mentioned; `quantity` is only set for a bare
+   * quantity with no flower ("make it 10") so the caller can apply it to an
+   * item already under discussion.
    */
-  async extractOrderDetails(message: string): Promise<{
-    flowers: string | null;
-    quantity: number | null;
-    date: string | null;
-    rawDate?: string;
-  }> {
+  async extractOrderDetails(message: string): Promise<ExtractedOrderDetails> {
     const systemPrompt = `You are an expert at extracting structured data from natural language.
 Today's date is ${new Date().toISOString().split('T')[0]} (${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}).
 
@@ -79,6 +129,7 @@ Extract flower order details and return ONLY valid JSON. Be smart about:
 - Spelling variations (lillies = lilies, rozes = roses)
 - Date formats (2nd february 2026, Feb 2, tomorrow, next week)
 - Quantities (5, five, a dozen = 12)
+- Multiple flowers in one message — one items entry per flower
 
 Convert dates to YYYY-MM-DD format.`;
 
@@ -86,15 +137,16 @@ Convert dates to YYYY-MM-DD format.`;
 
 Extract:
 {
-  "flowers": "flower type or null",
-  "quantity": number or null,
+  "items": [{"flowers": "flower type", "quantity": number or null}],
+  "quantity": number or null (ONLY for a bare quantity with no flower named),
   "date": "YYYY-MM-DD or null"
 }
 
 Examples:
-- "I want 5 lillies" → {"flowers": "lilies", "quantity": 5, "date": null}
-- "Send me roses for tomorrow" → {"flowers": "roses", "quantity": null, "date": "2026-01-11"}
-- "3 tulips on 2nd february 2026" → {"flowers": "tulips", "quantity": 3, "date": "2026-02-02"}
+- "I want 5 lillies" → {"items": [{"flowers": "lilies", "quantity": 5}], "quantity": null, "date": null}
+- "5 roses and 3 tulips for tomorrow" → {"items": [{"flowers": "roses", "quantity": 5}, {"flowers": "tulips", "quantity": 3}], "quantity": null, "date": "2026-01-11"}
+- "Send me roses on 2nd february 2026" → {"items": [{"flowers": "roses", "quantity": null}], "quantity": null, "date": "2026-02-02"}
+- "make it 10 instead" → {"items": [], "quantity": 10, "date": null}
 
 Return ONLY JSON:`;
 
@@ -102,16 +154,8 @@ Return ONLY JSON:`;
       const response = await this.generate(prompt, systemPrompt, { json: true });
       logger.info({ response, message }, 'Ollama order extraction response');
 
-      const extracted = this.parseJsonResponse<{
-        flowers?: string | null;
-        quantity?: number | null;
-        date?: string | null;
-      }>(response);
-      return {
-        flowers: extracted.flowers || null,
-        quantity: extracted.quantity || null,
-        date: extracted.date || null
-      };
+      const raw = this.parseJsonResponse<Record<string, unknown>>(response);
+      return coerceExtractedOrder(raw);
     } catch (error) {
       logger.error({ error, message }, 'Failed to extract order details');
       throw error;
@@ -183,23 +227,23 @@ Respond naturally and helpfully.`;
    */
   async generateOrderConfirmation(orderDetails: {
     orderId: string;
-    flowers: string;
-    quantity: number;
+    /** Line items description, e.g. "5 Roses, 3 Lilies" */
+    items: string;
     price: number;
     deliveryDate: string;
   }): Promise<string> {
     const systemPrompt = `You are confirming a flower order. Be warm, clear, and concise.
 Include all details. Keep under 50 words.`;
 
-    const deliveryDateFormatted = new Date(orderDetails.deliveryDate).toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
+    const deliveryDateFormatted = new Date(orderDetails.deliveryDate).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
     });
 
     const prompt = `Confirm this order naturally:
 - Order ID: ${orderDetails.orderId}
-- Flowers: ${orderDetails.quantity} ${orderDetails.flowers}
+- Flowers: ${orderDetails.items}
 - Price: ₹${orderDetails.price}
 - Delivery: ${deliveryDateFormatted}
 
@@ -212,7 +256,7 @@ Write a friendly, natural confirmation with all these details.`;
       return `✅ Order Confirmed!
 
 Order ID: ${orderDetails.orderId}
-${orderDetails.quantity} ${orderDetails.flowers}
+${orderDetails.items}
 Price: ₹${orderDetails.price}
 Delivery: ${deliveryDateFormatted}
 

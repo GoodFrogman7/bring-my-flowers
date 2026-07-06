@@ -152,7 +152,7 @@ export function fakeOllama() {
       confidence: 0.9
     })),
     extractOrderDetails: vi.fn(async () => ({
-      flowers: null as string | null,
+      items: [] as Array<{ flowers: string; quantity: number | null }>,
       quantity: null as number | null,
       date: null as string | null
     })),

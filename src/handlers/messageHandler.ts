@@ -5,11 +5,12 @@ import { MessageIntent, RecurringOrder } from '../types';
 import { cancelDelivery } from './actions/cancelDelivery';
 import { rescheduleDelivery } from './actions/rescheduleDelivery';
 import { OwnerCommandHandler } from './ownerCommands';
-import { findBestFlowerMatch } from '../utils/fuzzyMatch';
-import { OrderSessionStore, OrderDraft, parseQuantity } from '../conversation/orderSession';
+import { findBestFlowerMatch, areFlowerNamesSimilar } from '../utils/fuzzyMatch';
+import { OrderSessionStore, OrderDraft, DraftItem, parseQuantity } from '../conversation/orderSession';
 import { OrderFulfillment } from './orderFulfillment';
 import { LanguageDetector, responses, formatResponse, Language } from '../i18n/languageDetector';
 import { parseRecurrence, parseDayOfWeek, nextOccurrence, describeSchedule } from '../utils/recurrence';
+import { serializeItems, totalQuantity, displayItems } from '../utils/orderItems';
 import { generateOrderId, generateRecurringId } from '../utils/ids';
 import logger from '../utils/logger';
 
@@ -220,8 +221,8 @@ Answer their question naturally and helpfully.`;
     logger.info({ phone, message, recurring: options.recurring }, 'Starting order conversation');
 
     const draft: OrderDraft = {
-      flowers: null,
-      quantity: null,
+      items: [],
+      pendingQuantity: null,
       date: null,
       stage: 'COLLECTING',
       language: this.languageDetector.detectLanguage(message),
@@ -276,6 +277,8 @@ Answer their question naturally and helpfully.`;
       };
     }
 
+    const quantitiesComplete = draft.items.length > 0 && draft.items.every(item => item.quantity !== null);
+
     if (draft.recurrence && draft.recurrence.day === null) {
       if (draft.recurrence.frequency === 'WEEKLY') {
         const day = parseDayOfWeek(message);
@@ -283,8 +286,8 @@ Answer their question naturally and helpfully.`;
           draft.recurrence.day = day;
           return;
         }
-      } else if (draft.recurrence.frequency === 'MONTHLY' && draft.quantity !== null) {
-        // Quantity is collected first, so a bare number here is the day
+      } else if (draft.recurrence.frequency === 'MONTHLY' && quantitiesComplete) {
+        // Quantities are collected first, so a bare number here is the day
         const match = message.trim().match(/^([1-9]|1\d|2[0-8])(st|nd|rd|th)?$/);
         if (match) {
           draft.recurrence.day = parseInt(match[1], 10);
@@ -295,21 +298,57 @@ Answer their question naturally and helpfully.`;
 
     const quantity = parseQuantity(message);
     if (quantity !== null) {
-      draft.quantity = quantity;
+      this.applyBareQuantity(draft, quantity);
       return;
     }
 
     try {
       const extracted = await this.ollamaClient.extractOrderDetails(message);
-      if (extracted.flowers) draft.flowers = extracted.flowers;
-      if (extracted.quantity && extracted.quantity > 0) draft.quantity = extracted.quantity;
+      const addedThisMessage = new Set<DraftItem>();
+      for (const entry of extracted.items) {
+        const existing = draft.items.find(item => areFlowerNamesSimilar(item.name, entry.flowers));
+        if (existing) {
+          if (entry.quantity) {
+            // Duplicates within one message add up ("5 roses and 3 more
+            // roses"); a re-mention in a later message is a correction.
+            existing.quantity = addedThisMessage.has(existing)
+              ? (existing.quantity ?? 0) + entry.quantity
+              : entry.quantity;
+          }
+        } else {
+          const itemQuantity = entry.quantity ?? draft.pendingQuantity;
+          if (entry.quantity === null && draft.pendingQuantity !== null) draft.pendingQuantity = null;
+          const newItem: DraftItem = { name: entry.flowers, quantity: itemQuantity };
+          draft.items.push(newItem);
+          addedThisMessage.add(newItem);
+        }
+      }
+      if (extracted.quantity) {
+        this.applyBareQuantity(draft, extracted.quantity);
+      }
       // Subscriptions have a schedule, not a one-off date
-      if (!draft.recurrence && extracted.date && /^\d{4}-\d{2}-\d{2}$/.test(extracted.date)) {
+      if (!draft.recurrence && extracted.date) {
         draft.date = extracted.date;
       }
     } catch (error) {
       logger.warn({ error, message }, 'Order extraction failed; keeping current draft');
     }
+  }
+
+  /**
+   * A quantity with no flower attached goes to the first item still missing
+   * one; with a single fully-specified item it's a correction ("make it 5");
+   * before any flower is named it's held until one arrives.
+   */
+  private applyBareQuantity(draft: OrderDraft, quantity: number): void {
+    const target = draft.items.find(item => item.quantity === null)
+      ?? (draft.items.length === 1 ? draft.items[0] : undefined);
+    if (target) {
+      target.quantity = quantity;
+    } else if (draft.items.length === 0) {
+      draft.pendingQuantity = quantity;
+    }
+    // Several items, all quantified: an unattributed number is ambiguous — ignore it
   }
 
   /**
@@ -320,51 +359,73 @@ Answer their question naturally and helpfully.`;
     const inventory = await this.dataStore.getAllInventory();
     const availableFlowers = inventory.map(item => item.item_name);
 
-    if (!draft.flowers) {
+    if (draft.items.length === 0) {
       await this.askAndSave(phone, message, draft, {
         availableFlowers,
-        error: draft.quantity ? 'missing_flower' : 'missing_all'
+        error: draft.pendingQuantity ? 'missing_flower' : 'missing_all'
       });
       return;
     }
 
-    const flowerMatch = findBestFlowerMatch(draft.flowers, availableFlowers);
-    if (!flowerMatch || flowerMatch.confidence < 0.6) {
-      logger.warn({ searchTerm: draft.flowers, availableFlowers }, 'No fuzzy match found');
-      const unmatched = draft.flowers;
-      draft.flowers = null;
-      await this.askAndSave(phone, message, draft, {
-        availableFlowers,
-        error: 'no_match',
-        requestedFlower: unmatched
-      });
-      return;
+    // Resolve every requested name to an exact inventory item
+    for (const item of draft.items) {
+      const flowerMatch = findBestFlowerMatch(item.name, availableFlowers);
+      if (!flowerMatch || flowerMatch.confidence < 0.6) {
+        logger.warn({ searchTerm: item.name, availableFlowers }, 'No fuzzy match found');
+        const unmatched = item.name;
+        draft.items = draft.items.filter(other => other !== item);
+        await this.askAndSave(phone, message, draft, {
+          availableFlowers,
+          error: 'no_match',
+          requestedFlower: unmatched
+        });
+        return;
+      }
+      item.name = flowerMatch.match;
     }
 
-    const matchedFlower = inventory.find(item => item.item_name === flowerMatch.match)!;
-    draft.flowers = matchedFlower.item_name;
+    // Merge duplicate mentions of the same flower by summing quantities
+    const merged: DraftItem[] = [];
+    for (const item of draft.items) {
+      const existing = merged.find(other => other.name === item.name);
+      if (!existing) {
+        merged.push(item);
+      } else if (item.quantity !== null) {
+        existing.quantity = (existing.quantity ?? 0) + item.quantity;
+      }
+    }
+    draft.items = merged;
 
-    if (!draft.quantity) {
+    const flowerByName = new Map(inventory.map(item => [item.item_name, item]));
+
+    const unquantified = draft.items.find(item => item.quantity === null);
+    if (unquantified) {
+      const flower = flowerByName.get(unquantified.name)!;
       await this.askAndSave(phone, message, draft, {
-        matchedFlower: matchedFlower.item_name,
-        flowerPrice: matchedFlower.unit_price,
-        flowerStock: matchedFlower.quantity,
+        matchedFlower: flower.item_name,
+        flowerPrice: flower.unit_price,
+        flowerStock: flower.quantity,
         error: 'missing_quantity'
       });
       return;
     }
 
+    const lineItems = draft.items.map(item => ({
+      flower: flowerByName.get(item.name)!,
+      quantity: item.quantity!
+    }));
+    const totalPrice = lineItems.reduce((sum, line) => sum + line.quantity * line.flower.unit_price, 0);
+    const itemsDescription = serializeItems(lineItems.map(line => ({ name: line.flower.item_name, quantity: line.quantity })));
+
     // Subscription drafts: collect the delivery day, confirm, create. Stock
     // is checked per cycle by the scheduler, not frozen at signup.
     if (draft.recurrence) {
-      const totalPerDelivery = draft.quantity * matchedFlower.unit_price;
-
       if (draft.recurrence.day === null) {
         draft.stage = 'COLLECTING';
         this.orderSessions.set(phone, draft);
         const question = draft.recurrence.frequency === 'MONTHLY'
           ? 'Which day of the month should we deliver? (1-28)'
-          : `Which day should we deliver ${draft.quantity} ${matchedFlower.item_name} every week? (e.g. Monday)`;
+          : `Which day should we deliver ${itemsDescription} every week? (e.g. Monday)`;
         await this.notifier.sendCustomMessage(phone, question);
         return;
       }
@@ -374,48 +435,53 @@ Answer their question naturally and helpfully.`;
         this.orderSessions.set(phone, draft);
         await this.notifier.sendCustomMessage(
           phone,
-          `Here's your subscription:\n\n${draft.quantity} ${matchedFlower.item_name} ${describeSchedule(draft.recurrence.frequency, draft.recurrence.day)} — ₹${totalPerDelivery} per delivery\n\nReply YES to confirm or NO to cancel.`
+          `Here's your subscription:\n\n${itemsDescription} ${describeSchedule(draft.recurrence.frequency, draft.recurrence.day)} — ₹${totalPrice} per delivery\n\nReply YES to confirm or NO to cancel.`
         );
         return;
       }
 
       this.orderSessions.clear(phone);
-      await this.createSubscription(phone, draft, matchedFlower.item_name, totalPerDelivery);
+      await this.createSubscription(phone, draft, totalPrice);
       return;
     }
 
-    if (matchedFlower.quantity < draft.quantity) {
-      logger.warn({
-        requested: draft.quantity,
-        available: matchedFlower.quantity,
-        flower: matchedFlower.item_name
-      }, 'Insufficient stock');
-      draft.quantity = null;
-      await this.askAndSave(phone, message, draft, {
-        matchedFlower: matchedFlower.item_name,
-        flowerStock: matchedFlower.quantity,
-        error: 'low_stock'
-      });
-      return;
+    // One-off orders: every line must be in stock right now
+    for (const line of lineItems) {
+      if (line.flower.quantity < line.quantity) {
+        logger.warn({
+          requested: line.quantity,
+          available: line.flower.quantity,
+          flower: line.flower.item_name
+        }, 'Insufficient stock');
+        const draftItem = draft.items.find(item => item.name === line.flower.item_name)!;
+        draftItem.quantity = null;
+        await this.askAndSave(phone, message, draft, {
+          matchedFlower: line.flower.item_name,
+          flowerStock: line.flower.quantity,
+          requestedQuantity: line.quantity,
+          error: 'low_stock'
+        });
+        return;
+      }
     }
 
     if (!draft.date) {
       await this.askAndSave(phone, message, draft, {
-        matchedFlower: matchedFlower.item_name,
-        flowerPrice: matchedFlower.unit_price,
+        matchedFlower: draft.items[0].name,
         error: 'missing_date'
       });
       return;
     }
 
-    const totalPrice = draft.quantity * matchedFlower.unit_price;
-
     if (this.confirmationRequired && draft.stage !== 'AWAITING_CONFIRMATION') {
       draft.stage = 'AWAITING_CONFIRMATION';
       this.orderSessions.set(phone, draft);
+      const lines = lineItems
+        .map(line => `${line.quantity} ${line.flower.item_name} — ₹${line.quantity * line.flower.unit_price}`)
+        .join('\n');
       await this.notifier.sendCustomMessage(
         phone,
-        `Here's your order:\n\n${draft.quantity} ${matchedFlower.item_name} — ₹${totalPrice}\nDelivery: ${draft.date}\n\nReply YES to confirm or NO to cancel.`
+        `Here's your order:\n\n${lines}\nTotal: ₹${totalPrice}\nDelivery: ${draft.date}\n\nReply YES to confirm or NO to cancel.`
       );
       return;
     }
@@ -426,8 +492,7 @@ Answer their question naturally and helpfully.`;
     await this.fulfillment.fulfill({
       phone,
       orderId: generateOrderId(),
-      flower: matchedFlower,
-      quantity: draft.quantity,
+      items: lineItems,
       deliveryDate: draft.date,
       totalPrice,
       language: draft.language
@@ -443,6 +508,7 @@ Answer their question naturally and helpfully.`;
       matchedFlower?: string;
       flowerPrice?: number;
       flowerStock?: number;
+      requestedQuantity?: number;
       error: string;
       requestedFlower?: string | null;
     }
@@ -453,8 +519,8 @@ Answer their question naturally and helpfully.`;
     const response = await this.ollamaClient.generateOrderResponse({
       customerMessage: message,
       extractedDetails: {
-        flowers: context.requestedFlower ?? draft.flowers,
-        quantity: draft.quantity,
+        flowers: context.requestedFlower ?? (draft.items.map(item => item.name).join(', ') || null),
+        quantity: context.requestedQuantity ?? draft.pendingQuantity,
         date: draft.date
       },
       availableFlowers: context.availableFlowers,
@@ -471,20 +537,21 @@ Answer their question naturally and helpfully.`;
   private async createSubscription(
     phone: string,
     draft: OrderDraft,
-    flowerName: string,
     amountPerDelivery: number
   ): Promise<void> {
     const spec = draft.recurrence!;
     const day = spec.day ?? 0;
     const today = new Date().toISOString().split('T')[0];
     const firstDate = nextOccurrence(spec.frequency, day, today);
+    const specs = draft.items.map(item => ({ name: item.name, quantity: item.quantity! }));
+    const itemsDescription = serializeItems(specs);
 
     const recurring: RecurringOrder = {
       recurring_id: generateRecurringId(),
       customer_phone: phone,
       customer_name: `Customer ${phone.slice(-4)}`,
-      items: flowerName,
-      quantity: draft.quantity!,
+      items: itemsDescription,
+      quantity: totalQuantity(specs),
       frequency: spec.frequency,
       day,
       next_date: firstDate,
@@ -499,8 +566,7 @@ Answer their question naturally and helpfully.`;
     await this.notifier.sendCustomMessage(
       phone,
       formatResponse(responses.recurring_created[draft.language], {
-        quantity: recurring.quantity,
-        items: recurring.items,
+        items: itemsDescription,
         schedule: describeSchedule(spec.frequency, day),
         amount: amountPerDelivery,
         date: firstDate
@@ -510,8 +576,7 @@ Answer their question naturally and helpfully.`;
     logger.info({
       recurring_id: recurring.recurring_id,
       phone,
-      items: flowerName,
-      quantity: recurring.quantity,
+      items: itemsDescription,
       frequency: spec.frequency,
       first_date: firstDate
     }, 'Subscription created');
@@ -539,7 +604,7 @@ Answer their question naturally and helpfully.`;
       .filter(r => r.status !== 'CANCELLED');
 
     const describe = (r: RecurringOrder) =>
-      `${r.recurring_id}: ${r.quantity} ${r.items} ${describeSchedule(r.frequency, r.day)} (${r.status}, next ${r.next_date})`;
+      `${r.recurring_id}: ${displayItems(r.items, r.quantity)} ${describeSchedule(r.frequency, r.day)} (${r.status}, next ${r.next_date})`;
 
     if (action === 'list') {
       await this.notifier.sendCustomMessage(
