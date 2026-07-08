@@ -6,6 +6,7 @@ import { applyInstruction, findCustomerByPhone, appendRemark, CustomerRecord } f
 import { buildPaymentMessages, renewalsDue } from './paymentRun';
 import { createNextCycle } from './renewal';
 import { writeDelSheetDetailed, dueRows } from './delSheet';
+import { writeMasterView } from './exportMaster';
 import { todayIST, addDays } from './dates';
 import { samePhone } from '../utils/ids';
 import logger from '../utils/logger';
@@ -32,6 +33,7 @@ const STAFF_HELP = `🌸 Ops commands
 
 due [YYYY-MM-DD|tomorrow] — deliveries due (default today)
 sheet [YYYY-MM-DD|tomorrow] — generate the delivery sheet file
+master — export the full Master view as Excel (verification)
 payrun [YYYY-MM-DD] — payment messages for that day's deliveries (preview)
 pending — cycles with money to collect
 renewals — finished cycles awaiting renewal
@@ -189,6 +191,12 @@ export class BusinessMessageHandler {
           ? `\n✍️ ${result.manual.length} manual: ${result.manual.slice(0, 8).map(m => `#${m.id}`).join(', ')}${result.manual.length > 8 ? '…' : ''}`
           : '';
         return `📋 Delivery sheet for ${date}: ${result.rows} rows, ${result.autoAssigned} auto-assigned${manualLine}\n→ ${outPath} (see Procurement tab for TO BUY)`;
+      }
+
+      case 'master': {
+        const outPath = `${this.delSheetDir}/master-view-${today}.xlsx`;
+        const rows = writeMasterView(this.db, outPath);
+        return `📖 Master view exported: ${rows} rows → ${outPath}\nOpen it in Excel — every bot action is already reflected there.`;
       }
 
       case 'payrun': {

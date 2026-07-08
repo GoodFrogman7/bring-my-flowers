@@ -110,6 +110,11 @@ export class WhatsAppBot implements MessageSender {
       // Ignore if message is from self or status broadcast
       if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') return;
 
+      // Ignore group chats: the handlers model 1:1 conversations, and a group
+      // jid would be mistaken for a customer phone (the bot would greet the
+      // whole ops group). Group integration is a deliberate future feature.
+      if (msg.key.remoteJid?.endsWith('@g.us')) return;
+
       // Extract message text
       const messageText = msg.message?.conversation ||
                          msg.message?.extendedTextMessage?.text ||
