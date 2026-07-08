@@ -23,12 +23,30 @@ export type Instruction =
   | { type: 'ADDRESS_CHANGE'; address: string }
   | { type: 'STATUS' }
   | { type: 'CANCEL_SUBSCRIPTION' }
-  | { type: 'RENEW' };
+  | { type: 'RENEW' }
+  | { type: 'NEW_ORDER'; text: string };         // bouquet/order request → human, never auto-applied
 
 const WORD_NUMBERS: Record<string, number> = { one: 1, a: 1, two: 2, three: 3, four: 4 };
 
 /** Phrases the restriction patterns must never read as a flower name. */
 const NOT_A_FLOWER = /\b(delivery|deliver|need|thanks|thank you|problem|issue|worries|today|tomorrow|aaj|kal|this week|next week|it|anything|now|more)\b/;
+
+/** Flower words with a quantity nearby signal an order, not a reschedule. */
+const FLOWER_WORDS = /\b(rose|roses|lily|lilies|lill?ies|carnation|gerbera|rajni|rajnigandha|tuberose|orchid|sunflower|daisy|daisies|glad|gladioli|eustoma|bop|anthurium|heliconia|guldawari|alstroemeria|tulip|flower|flowers|phool)\b/;
+
+/**
+ * Detect a NEW order request. Signals (any one suffices):
+ *  - bouquet in any spelling the customers actually use
+ *  - "I want to send/deliver/order/gift …"
+ *  - a quantity next to a flower word in a send/deliver context ("15 lillies")
+ */
+export function isNewOrder(text: string): boolean {
+  if (/\bbo?u?qu?u?et?s?\b|\bbuke\b|\bguldasta\b/.test(text)) return true;
+  if (/\b(i|we)\s+(want|would like|need)\s+to\s+(send|deliver|order|gift)\b/.test(text)) return true;
+  if (/\b(place|placing)\s+(an?\s+)?order\b|\bnew order\b|\border\s+for\b/.test(text)) return true;
+  if (FLOWER_WORDS.test(text) && /\b\d{1,3}\b/.test(text) && /\b(send|deliver|want|need|order|bhej|chahiye)\b/.test(text)) return true;
+  return false;
+}
 
 function parseWeeks(text: string): number | null {
   const match = text.match(/(\d+|one|two|three|four|a)\s+weeks?/);
@@ -71,6 +89,14 @@ export function parseInstruction(message: string, today: string): Instruction | 
   // Renewal intent
   if (/\b(renew|renewal|next cycle|continue (with )?(the )?next)\b/.test(text)) {
     return { type: 'RENEW' };
+  }
+
+  // NEW ORDER — must outrank skip/reschedule: "i want to deliver a bouqet to
+  // ananya, 15 lillies, tomorrow 6pm" is new business for a third party, not
+  // a reschedule of the sender's own subscription. Orders are never
+  // auto-applied; they escalate as a flagged lead.
+  if (isNewOrder(text)) {
+    return { type: 'NEW_ORDER', text: message.trim() };
   }
 
   // Payment claims

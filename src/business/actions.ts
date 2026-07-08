@@ -271,6 +271,14 @@ export function applyInstruction(
       };
     }
 
+    case 'NEW_ORDER': {
+      appendRemark(db, customer.id, `Order request: ${instruction.text.slice(0, 120)}`, today);
+      return {
+        reply: `Lovely! 🌸 We've passed your order to the team — they'll confirm the details, price and delivery time with you shortly.`,
+        ownerAlert: `🛒 NEW ORDER from ${label} (${customer.phones.split('//')[0]}):\n"${instruction.text.slice(0, 250)}"\nReply to them to confirm details.`
+      };
+    }
+
     case 'RENEW': {
       // Lazily imported to avoid a module cycle (renewal.ts uses appendRemark)
       const { createNextCycle } = require('./renewal') as typeof import('./renewal');

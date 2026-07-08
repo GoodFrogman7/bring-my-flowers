@@ -48,7 +48,7 @@ customer <id> — customer profile`;
 const LLM_CLASSIFY_PROMPT = `You classify flower-subscription customer messages.
 Categories: SKIP_TODAY (hold one delivery), SKIP_WEEKS, HOLD_INDEFINITE, RESUME,
 DAY_CHANGE, PAYMENT_CLAIM, RESTRICTION, ADDRESS_CHANGE, STATUS, CANCEL_SUBSCRIPTION,
-RENEW, OTHER.
+RENEW, NEW_ORDER (wants to buy/send flowers or a bouquet), OTHER.
 Reply ONLY with JSON: {"category": "...", "weeks": number|null, "day": "monday-sunday or null", "flower": "name or null", "mode": "payment mode or null"}`;
 
 export class BusinessMessageHandler {
@@ -140,6 +140,7 @@ export class BusinessMessageHandler {
         case 'STATUS': return { type: 'STATUS' };
         case 'CANCEL_SUBSCRIPTION': return { type: 'CANCEL_SUBSCRIPTION' };
         case 'RENEW': return { type: 'RENEW' };
+        case 'NEW_ORDER': return { type: 'NEW_ORDER', text: message.trim() };
         case 'DAY_CHANGE': {
           const day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].indexOf((parsed.day || '').toLowerCase());
           return day >= 0 ? { type: 'DAY_CHANGE', day } : null;

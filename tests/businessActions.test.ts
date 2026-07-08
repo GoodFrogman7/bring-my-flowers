@@ -102,6 +102,15 @@ describe('applyInstruction', () => {
     expect(result.ownerAlert).toContain('CANCELLATION REQUEST');
   });
 
+  it('NEW_ORDER escalates as a flagged lead and NEVER touches the schedule', () => {
+    const result = applyInstruction(db, customer(), { type: 'NEW_ORDER', text: 'bouquet for ananya, 15 lilies, tomorrow 6pm' }, TODAY);
+    expect(result.ownerAlert).toContain('🛒 NEW ORDER');
+    expect(result.ownerAlert).toContain('ananya');
+    expect(result.reply).toContain('passed your order');
+    // Schedule untouched — this exact case once moved a delivery
+    expect(effectiveDates()).toEqual(['2026-07-06', '2026-07-13', '2026-07-20', '2026-07-27']);
+  });
+
   it('STATUS reports next delivery, seq, and pending amount', () => {
     const result = applyInstruction(db, customer(), { type: 'STATUS' }, TODAY);
     expect(result.reply).toContain('1st of 4');

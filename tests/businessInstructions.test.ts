@@ -119,6 +119,33 @@ describe('renew and status', () => {
   });
 });
 
+describe('new-order detection (must outrank reschedule/skip)', () => {
+  it('the exact message that once moved a delivery instead of taking an order', () => {
+    const parsed = parse('hi i want to deliver a bouqet to ananya tripathi 15 lillies sector 32 noida, tomorrow 6pm');
+    expect(parsed?.type).toBe('NEW_ORDER');
+    expect((parsed as { text: string }).text).toContain('ananya tripathi');
+  });
+
+  it.each([
+    'I want a bouquet for my mom',
+    'need a boquet tomorrow',
+    'bhaiya ek guldasta bhej do',
+    'please send 20 roses to my office tomorrow',
+    'i want to order flowers for an anniversary',
+    'place an order for 10 lilies'
+  ])('%j → NEW_ORDER', (message) => {
+    expect(parse(message)?.type).toBe('NEW_ORDER');
+  });
+
+  it('does not hijack genuine subscription instructions', () => {
+    expect(parse('send tomorrow instead')?.type).toBe('RESCHEDULE_NEXT');
+    expect(parse('skip this week')?.type).toBe('SKIP');
+    expect(parse('no gerbera please')?.type).toBe('RESTRICTION');
+    expect(parse('deliver on the 20th')?.type).toBe('RESCHEDULE_NEXT');
+    expect(parse('please cancel my subscription')?.type).toBe('CANCEL_SUBSCRIPTION');
+  });
+});
+
 describe('unparseable', () => {
   it('returns null for messages needing a human', () => {
     expect(parse('bhaiya wo kal wale flowers kharab the')).toBeNull();
