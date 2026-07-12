@@ -8,6 +8,12 @@ export function generateRecurringId(): string {
   return `REC-${Date.now().toString(36).toUpperCase()}-${rand}`;
 }
 
+/** One-off order created from the "Updates" WhatsApp group — distinct from Master-imported B- prefixes. */
+export function generateOneOffOrderId(): string {
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `GU-${Date.now().toString(36).toUpperCase()}-${rand}`;
+}
+
 /**
  * Phone equality across transports: Baileys reports "919876543210", Twilio
  * "+919876543210", config may hold either. Compare digits only.

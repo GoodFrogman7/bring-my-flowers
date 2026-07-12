@@ -139,6 +139,32 @@ CREATE TABLE IF NOT EXISTS flower_price_history (
   cost_per_bunch REAL NOT NULL,
   PRIMARY KEY (flower, date)
 );
+
+-- Staging log: every message from the whitelisted "Updates" WhatsApp group,
+-- written the instant it arrives so nothing is lost if the bot restarts
+-- before the nightly job processes it.
+CREATE TABLE IF NOT EXISTS group_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  participant TEXT NOT NULL DEFAULT '',
+  message_text TEXT NOT NULL DEFAULT '',
+  received_at TEXT NOT NULL DEFAULT '',
+  processed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_group_messages_unprocessed ON group_messages(processed_at);
+
+-- Append-only audit trail for every group_messages row the nightly job acts
+-- on, so a week of auto-applied actions can be reviewed for misfires.
+CREATE TABLE IF NOT EXISTS group_update_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL REFERENCES group_messages(id),
+  classification TEXT NOT NULL CHECK (classification IN ('NEW_ORDER','CUSTOMER_UPDATE','NOTE','UNCLEAR')),
+  matched_customer_id TEXT,
+  matched_order_id TEXT,
+  action_taken TEXT NOT NULL DEFAULT '',
+  escalated INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_group_update_log_message ON group_update_log(message_id);
 `;
 
 /** Additive migrations for databases created before a column existed. */
