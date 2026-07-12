@@ -19,6 +19,8 @@ import { InventoryMonitor } from './inventory/inventoryMonitor';
 import { createServer, VoiceComponents, PaymentComponents } from './server';
 import { openDb } from './business/db';
 import { BusinessMessageHandler } from './business/businessHandler';
+import { insertGroupMessage } from './business/groupUpdates';
+import { GroupUpdatesScheduler } from './scheduler/groupUpdates';
 import { loadConfig, ensureDirectories } from './utils/config';
 import logger from './utils/logger';
 
@@ -93,6 +95,7 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
   const transport = (process.env.BUSINESS_TRANSPORT || 'baileys').toLowerCase();
   let bot: MessageSender & { disconnect(): Promise<void> };
   let server: ReturnType<typeof createServer> | null = null;
+  let groupScheduler: GroupUpdatesScheduler | undefined;
 
   const buildHandler = (sender: MessageSender) => new BusinessMessageHandler({
     db,
@@ -108,24 +111,45 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     bot = twilioBot;
     server = createServer({ messageHandler: buildHandler(twilioBot), twilioAuthToken: token }, parseInt(process.env.WEBHOOK_PORT || '3000'));
   } else {
+    const updatesGroupJid = process.env.UPDATES_GROUP_JID || undefined;
     const baileysBot = new WhatsAppBot(
       config.whatsapp.sessionPath,
       config.whatsapp.reconnectDelay,
-      config.whatsapp.maxReconnectAttempts
+      config.whatsapp.maxReconnectAttempts,
+      updatesGroupJid
     );
     bot = baileysBot;
     const handler = buildHandler(baileysBot);
     baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
 
+    if (updatesGroupJid) {
+      baileysBot.onGroupMessage(async (participant, message) => {
+        insertGroupMessage(db, participant, message, new Date().toISOString());
+      });
+      groupScheduler = new GroupUpdatesScheduler({
+        db,
+        sender: baileysBot,
+        groupJid: updatesGroupJid,
+        ollama: ollamaClient,
+        delSheetDir: './data',
+        processTime: process.env.UPDATES_PROCESS_TIME
+      });
+      groupScheduler.start();
+      logger.info({ updatesGroupJid }, '✓ "Updates" group ingestion active');
+    }
+
     logger.info('Starting WhatsApp (scan the QR with the customer-care phone)...');
     await baileysBot.start();
+    // First-time pairing needs a human to fetch the QR and scan — allow 5 min
+    // by default; CONNECT_TIMEOUT_SECONDS overrides for slow first-time setup.
+    const connectTimeout = parseInt(process.env.CONNECT_TIMEOUT_SECONDS || '300');
     let attempts = 0;
-    while (!baileysBot.isConnected() && attempts < 120) {
+    while (!baileysBot.isConnected() && attempts < connectTimeout) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       attempts++;
     }
     if (!baileysBot.isConnected()) {
-      logger.error('WhatsApp failed to connect within 120 seconds');
+      logger.error(`WhatsApp failed to connect within ${connectTimeout} seconds`);
       process.exit(1);
     }
   }
@@ -140,6 +164,7 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
 
   const shutdown = async () => {
     logger.info('Shutting down gracefully...');
+    groupScheduler?.stop();
     await bot.disconnect();
     server?.close();
     db.close();

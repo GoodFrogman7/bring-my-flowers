@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
+  fetchLatestBaileysVersion,
   WASocket,
   proto,
   Browsers,
@@ -18,23 +19,35 @@ export class WhatsAppBot implements MessageSender {
   private maxReconnectAttempts: number;
   private reconnectAttempts: number = 0;
   private messageHandler: ((from: string, message: string) => Promise<void>) | null = null;
+  private groupMessageHandler: ((participant: string, message: string) => Promise<void>) | null = null;
   private connected: boolean = false;
+  private updatesGroupJid?: string;
+  private pairingRequested: boolean = false;
 
   constructor(
     sessionPath: string,
     reconnectDelay: number = 5000,
-    maxReconnectAttempts: number = 10
+    maxReconnectAttempts: number = 10,
+    updatesGroupJid?: string
   ) {
     this.sessionPath = sessionPath;
     this.reconnectDelay = reconnectDelay;
     this.maxReconnectAttempts = maxReconnectAttempts;
+    this.updatesGroupJid = updatesGroupJid;
   }
 
   async start(): Promise<void> {
     try {
+      this.pairingRequested = false;
       const { state, saveCreds } = await useMultiFileAuthState(this.sessionPath);
 
+      // WhatsApp rejects registration (405) when the advertised WA Web
+      // version is stale — always fetch the current one at startup.
+      const { version } = await fetchLatestBaileysVersion();
+      logger.info({ version }, 'Using WhatsApp Web version');
+
       this.sock = makeWASocket({
+        version,
         auth: {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -54,6 +67,7 @@ export class WhatsAppBot implements MessageSender {
         if (qr) {
           logger.info('QR Code received. Scan with WhatsApp:');
           QRCode.generate(qr, { small: true });
+          await this.maybeRequestPairingCode();
         }
 
         if (connection === 'close') {
@@ -105,15 +119,58 @@ export class WhatsAppBot implements MessageSender {
     }
   }
 
+  /**
+   * Alternative to QR scanning: when PAIRING_NUMBER is set, ask WhatsApp for
+   * an 8-character code the owner types in via Linked Devices → "Link with
+   * phone number instead". Requested once per connection attempt.
+   */
+  private async maybeRequestPairingCode(): Promise<void> {
+    const raw = process.env.PAIRING_NUMBER;
+    if (!raw || this.pairingRequested || !this.sock || this.sock.authState.creds.registered) return;
+    this.pairingRequested = true;
+    const phone = raw.replace(/[^0-9]/g, '');
+    try {
+      const code = await this.sock.requestPairingCode(phone);
+      const pretty = code.match(/.{1,4}/g)?.join('-') ?? code;
+      logger.info({ pairingCode: pretty }, 'Pairing code issued — enter it on the phone');
+      console.log(`\n🔗 PAIRING CODE for +${phone}: ${pretty}`);
+      console.log('   WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"\n');
+    } catch (error) {
+      logger.error({ error }, 'Failed to request pairing code — fall back to scanning the QR above');
+      this.pairingRequested = false;
+    }
+  }
+
   private async handleIncomingMessage(msg: proto.IWebMessageInfo): Promise<void> {
     try {
+      // Log group JIDs even for own-account messages, so UPDATES_GROUP_JID can
+      // be discovered by the owner texting the group from the linked number.
+      if (msg.key.fromMe && msg.key.remoteJid?.endsWith('@g.us') && msg.key.remoteJid !== this.updatesGroupJid) {
+        logger.info({ groupJid: msg.key.remoteJid }, 'Ignored message from non-whitelisted group');
+      }
+
       // Ignore if message is from self or status broadcast
       if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') return;
 
+      // Whitelisted exception: the one "Updates" ops group, if configured.
+      // Every other group stays ignored below exactly as before.
+      if (this.updatesGroupJid && msg.key.remoteJid === this.updatesGroupJid) {
+        const participant = msg.key.participant;
+        if (!participant) return; // system/announce messages can lack a participant
+        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        if (!text || !this.groupMessageHandler) return;
+        await this.groupMessageHandler(participant.split('@')[0], text);
+        return;
+      }
+
       // Ignore group chats: the handlers model 1:1 conversations, and a group
       // jid would be mistaken for a customer phone (the bot would greet the
-      // whole ops group). Group integration is a deliberate future feature.
-      if (msg.key.remoteJid?.endsWith('@g.us')) return;
+      // whole ops group). Logged so a group's JID can be found and whitelisted
+      // via UPDATES_GROUP_JID (see .env.example) without any special tooling.
+      if (msg.key.remoteJid?.endsWith('@g.us')) {
+        logger.info({ groupJid: msg.key.remoteJid }, 'Ignored message from non-whitelisted group');
+        return;
+      }
 
       // Extract message text
       const messageText = msg.message?.conversation ||
@@ -142,6 +199,11 @@ export class WhatsAppBot implements MessageSender {
 
   onMessage(handler: (from: string, message: string) => Promise<void>): void {
     this.messageHandler = handler;
+  }
+
+  /** Registers the handler for the whitelisted "Updates" group only (see updatesGroupJid). */
+  onGroupMessage(handler: (participant: string, message: string) => Promise<void>): void {
+    this.groupMessageHandler = handler;
   }
 
   async sendMessage(to: string, message: string): Promise<boolean> {
