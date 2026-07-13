@@ -59,13 +59,22 @@ export class GroupUpdatesScheduler {
     const tomorrow = addDays(today, 1);
 
     const result = await processGroupMessages(db, today, ollama);
-    if (result.processed > 0) {
-      const outPath = `${delSheetDir ?? './data'}/del-sheet-${tomorrow}.xlsx`;
-      writeDelSheetDetailed(db, tomorrow, outPath);
-    }
+    // Always regenerate and send tomorrow's sheet — the group expects the file
+    // every night, even on days with no updates to apply.
+    const outPath = `${delSheetDir ?? './data'}/del-sheet-${tomorrow}.xlsx`;
+    const sheet = writeDelSheetDetailed(db, tomorrow, outPath);
 
     const summary = formatGroupSummary(result, today);
     await sender.sendMessage(groupJid, summary);
-    logger.info({ ...result, escalated: result.escalated.length }, 'Group updates run complete');
+
+    const caption = `📋 Delivery sheet for ${tomorrow} — ${sheet.rows} rows, ${sheet.autoAssigned} auto-assigned` +
+      (sheet.manual.length > 0 ? `, ${sheet.manual.length} manual (see Procurement tab)` : '');
+    if (sender.sendDocument) {
+      const sent = await sender.sendDocument(groupJid, outPath, caption);
+      if (!sent) await sender.sendMessage(groupJid, `${caption}\n(⚠️ file send failed — it is saved at ${outPath})`);
+    } else {
+      await sender.sendMessage(groupJid, `${caption}\n→ ${outPath}`);
+    }
+    logger.info({ ...result, escalated: result.escalated.length, sheetRows: sheet.rows }, 'Group updates run complete');
   }
 }

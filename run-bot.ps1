@@ -1,14 +1,21 @@
 # Keeps the flower bot alive: starts Ollama if needed, restarts the bot if it
 # ever exits (crash, lost connection past max reconnects, etc.).
-# Close the window (or Ctrl+C) to stop it.
+# Runs headless as the "BringMyFlowersBot" scheduled task; launcher events go
+# to logs\launcher.log. To stop it: Stop-ScheduledTask BringMyFlowersBot.
 $ErrorActionPreference = 'Continue'
 Set-Location C:\bring_my_flowers
+
+function Log-Launcher($msg) {
+  $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
+  Write-Host $line
+  Add-Content -Path 'logs\launcher.log' -Value $line
+}
 
 # Single-instance guard: bail if another copy of the bot is already running.
 $existing = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object { $_.CommandLine -match 'src[\\/]index\.ts' }
 if ($existing) {
-  Write-Host "Flower bot already running (pid $($existing.ProcessId)) - not starting a second copy."
+  Log-Launcher "Flower bot already running (pid $($existing.ProcessId)) - not starting a second copy."
   Start-Sleep 10
   exit
 }
@@ -27,9 +34,8 @@ try {
 }
 
 while ($true) {
-  Write-Host ""
-  Write-Host ("===== Starting flower bot at {0} =====" -f (Get-Date))
+  Log-Launcher "===== Starting flower bot ====="
   npm run dev:business
-  Write-Host ("Bot exited at {0} - restarting in 15s (close this window to stop for good)" -f (Get-Date))
+  Log-Launcher "Bot exited - restarting in 15s"
   Start-Sleep 15
 }

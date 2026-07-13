@@ -8,9 +8,17 @@ import makeWASocket, {
   makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys';
 import * as QRCode from 'qrcode-terminal';
+import * as fs from 'fs';
+import * as path from 'path';
 import logger from '../utils/logger';
 import { Boom } from '@hapi/boom';
 import { MessageSender } from './messageSender';
+
+/**
+ * How long a disconnect may last before the process gives up and exits.
+ * Generous: a full reconnect cycle (10 attempts × 5s) fits several times over.
+ */
+const RECONNECT_WATCHDOG_MS = 3 * 60 * 1000;
 
 export class WhatsAppBot implements MessageSender {
   private sock: WASocket | null = null;
@@ -23,6 +31,7 @@ export class WhatsAppBot implements MessageSender {
   private connected: boolean = false;
   private updatesGroupJid?: string;
   private pairingRequested: boolean = false;
+  private reconnectWatchdog: NodeJS.Timeout | null = null;
 
   constructor(
     sessionPath: string,
@@ -87,10 +96,17 @@ export class WhatsAppBot implements MessageSender {
               maxAttempts: this.maxReconnectAttempts,
               delay: this.reconnectDelay
             }, 'Attempting to reconnect');
-            
-            setTimeout(() => this.start(), this.reconnectDelay);
+
+            this.armReconnectWatchdog();
+            setTimeout(() => {
+              this.start().catch(error => {
+                logger.error({ error }, 'Reconnect attempt threw — exiting so the launcher restarts a fresh process');
+                process.exit(1);
+              });
+            }, this.reconnectDelay);
           } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            logger.error('Max reconnect attempts reached. Please restart the bot.');
+            logger.error('Max reconnect attempts reached — exiting so the launcher restarts a fresh process.');
+            process.exit(1);
           } else {
             logger.error('Logged out from WhatsApp. Please delete sessions folder and restart.');
           }
@@ -99,6 +115,7 @@ export class WhatsAppBot implements MessageSender {
         if (connection === 'open') {
           this.connected = true;
           this.reconnectAttempts = 0;
+          this.clearReconnectWatchdog();
           logger.info('WhatsApp connection established successfully! 🎉');
         }
       });
@@ -116,6 +133,30 @@ export class WhatsAppBot implements MessageSender {
     } catch (error) {
       logger.error({ error }, 'Failed to start WhatsApp bot');
       throw error;
+    }
+  }
+
+  /**
+   * A reconnect can hang without ever emitting another connection.update
+   * (seen 2026-07-12: stream error 515 → "attempt 1" logged → silence for
+   * 25 hours). The launcher only restarts us when the process exits, so if
+   * we aren't back online within the window, exit and let it.
+   */
+  private armReconnectWatchdog(): void {
+    if (this.reconnectWatchdog) return;
+    this.reconnectWatchdog = setTimeout(() => {
+      this.reconnectWatchdog = null;
+      if (!this.connected) {
+        logger.error({ windowMs: RECONNECT_WATCHDOG_MS }, 'Still disconnected after the reconnect window — exiting so the launcher restarts a fresh process');
+        process.exit(1);
+      }
+    }, RECONNECT_WATCHDOG_MS);
+  }
+
+  private clearReconnectWatchdog(): void {
+    if (this.reconnectWatchdog) {
+      clearTimeout(this.reconnectWatchdog);
+      this.reconnectWatchdog = null;
     }
   }
 
@@ -222,6 +263,34 @@ export class WhatsAppBot implements MessageSender {
       return true;
     } catch (error) {
       logger.error({ error, to, message }, 'Failed to send message');
+      return false;
+    }
+  }
+
+  async sendDocument(to: string, filePath: string, caption?: string): Promise<boolean> {
+    if (!this.sock || !this.connected) {
+      logger.error({ to, filePath }, 'Cannot send document: Not connected');
+      return false;
+    }
+
+    const MIMETYPES: Record<string, string> = {
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.pdf': 'application/pdf'
+    };
+
+    try {
+      const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+      const fileName = path.basename(filePath);
+      await this.sock.sendMessage(jid, {
+        document: fs.readFileSync(filePath),
+        fileName,
+        mimetype: MIMETYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+        caption
+      });
+      logger.info({ to, filePath }, 'Document sent');
+      return true;
+    } catch (error) {
+      logger.error({ error, to, filePath }, 'Failed to send document');
       return false;
     }
   }

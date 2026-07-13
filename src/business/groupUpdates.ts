@@ -56,7 +56,7 @@ export function insertGroupMessage(db: BusinessDb, participant: string, text: st
 }
 
 /** Last-10-digit phone found anywhere in the message text, or null. */
-function extractPhone(text: string): string | null {
+export function extractPhone(text: string): string | null {
   const match = text.match(/(\+?\d[\d\s-]{8,14}\d)/);
   if (!match) return null;
   const digits = match[1].replace(/\D/g, '');
@@ -92,7 +92,7 @@ const VERB_ACTIONS: Record<string, Instruction> = {
  * stay case-SENSITIVE — an `i` flag across the whole pattern would make
  * `[A-Z]` match lowercase words too, swallowing the rest of the sentence.
  */
-function matchVerbFirst(text: string): { verb: string; name: string; rest: string } | null {
+export function matchVerbFirst(text: string): { verb: string; name: string; rest: string } | null {
   const verbMatch = text.match(/^(hold|skip|resume|restrict)\b\s+(.*)$/i);
   if (!verbMatch) return null;
   const nameMatch = verbMatch[2].match(/^((?:[A-Z][\w.]*\s*){1,4})(.*)$/);
@@ -107,7 +107,7 @@ function matchNameFirst(text: string): { name: string; rest: string } | null {
   return { name: match[1].trim(), rest: match[2].trim() };
 }
 
-function findCustomersByName(db: BusinessDb, name: string): CustomerRecord[] {
+export function findCustomersByName(db: BusinessDb, name: string): CustomerRecord[] {
   return db.prepare(`
     SELECT id, name, phones, address, zone FROM customers WHERE name LIKE ? LIMIT 5
   `).all(`%${name}%`) as CustomerRecord[];

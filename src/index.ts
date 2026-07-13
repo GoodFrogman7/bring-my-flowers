@@ -19,7 +19,7 @@ import { InventoryMonitor } from './inventory/inventoryMonitor';
 import { createServer, VoiceComponents, PaymentComponents } from './server';
 import { openDb } from './business/db';
 import { BusinessMessageHandler } from './business/businessHandler';
-import { insertGroupMessage } from './business/groupUpdates';
+import { GroupAssistant } from './business/groupAssistant';
 import { GroupUpdatesScheduler } from './scheduler/groupUpdates';
 import { loadConfig, ensureDirectories } from './utils/config';
 import logger from './utils/logger';
@@ -123,9 +123,16 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
 
     if (updatesGroupJid) {
-      baileysBot.onGroupMessage(async (participant, message) => {
-        insertGroupMessage(db, participant, message, new Date().toISOString());
+      // Questions answered live, "send sheet" served on demand, everything
+      // else staged for the nightly run — see src/business/groupAssistant.ts.
+      const groupAssistant = new GroupAssistant({
+        db,
+        sender: baileysBot,
+        groupJid: updatesGroupJid,
+        ollama: ollamaClient,
+        delSheetDir: './data'
       });
+      baileysBot.onGroupMessage((participant, message) => groupAssistant.handle(participant, message));
       groupScheduler = new GroupUpdatesScheduler({
         db,
         sender: baileysBot,
@@ -196,6 +203,9 @@ async function main() {
     const ollamaHealthy = await ollamaClient.checkHealth();
     if (ollamaHealthy) {
       logger.info('✓ Ollama is healthy');
+      // Fire-and-forget: load the model now, while RAM is most likely free
+      // (see OLLAMA_KEEP_ALIVE in .env), without delaying startup.
+      void ollamaClient.warmUp();
     } else {
       logger.warn(`Ollama not responding - will use fallback classification. Run: ollama pull ${config.ollama.model}`);
     }

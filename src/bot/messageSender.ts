@@ -6,4 +6,6 @@ export interface MessageSender {
   sendMessage(to: string, message: string): Promise<boolean>;
   sendMessageToMultiple(recipients: string[], message: string): Promise<void>;
   isConnected(): boolean;
+  /** Send a file (delivery sheet etc.). Optional — Twilio transport lacks it. */
+  sendDocument?(to: string, filePath: string, caption?: string): Promise<boolean>;
 }

@@ -58,11 +58,37 @@ export class OllamaClient {
   private endpoint: string;
   private model: string;
   private timeout: number;
+  /** GPU layers to offload; OLLAMA_NUM_GPU=0 forces CPU-only inference. */
+  private numGpu: number | undefined;
+  /** How long the model stays loaded after a request; -1 pins it forever. */
+  private keepAlive: number | string | undefined;
 
   constructor(endpoint: string, model: string, timeout: number = 60000) {
     this.endpoint = endpoint;
     this.model = model;
     this.timeout = timeout;  // Increased to 60 seconds for better reliability
+    const numGpu = process.env.OLLAMA_NUM_GPU;
+    this.numGpu = numGpu !== undefined && numGpu !== '' ? parseInt(numGpu) : undefined;
+    const keepAlive = process.env.OLLAMA_KEEP_ALIVE;
+    this.keepAlive = keepAlive === undefined || keepAlive === '' ? undefined
+      : (/^-?\d+$/.test(keepAlive) ? parseInt(keepAlive) : keepAlive);
+  }
+
+  /**
+   * Load the model into memory ahead of the first real request. Ollama
+   * refuses to LOAD a model when free RAM is below the model size — common
+   * on a busy laptop — so loading once at startup, while RAM is most likely
+   * available, and pinning via OLLAMA_KEEP_ALIVE beats reloading on demand.
+   */
+  async warmUp(): Promise<boolean> {
+    try {
+      await this.generate('');
+      logger.info({ model: this.model }, 'Ollama model loaded and pinned');
+      return true;
+    } catch {
+      logger.warn({ model: this.model }, 'Ollama warm-up failed — deterministic fallbacks in effect until the model loads');
+      return false;
+    }
   }
 
   async generate(prompt: string, systemPrompt?: string, options?: { json?: boolean }): Promise<string> {
@@ -80,7 +106,9 @@ export class OllamaClient {
           stream: false,
           // Ollama's native JSON mode constrains decoding to valid JSON —
           // far more reliable than scraping JSON out of prose with a regex.
-          ...(options?.json ? { format: 'json' } : {})
+          ...(options?.json ? { format: 'json' } : {}),
+          ...(this.numGpu !== undefined ? { options: { num_gpu: this.numGpu } } : {}),
+          ...(this.keepAlive !== undefined ? { keep_alive: this.keepAlive } : {})
         }),
         signal: controller.signal
       });
