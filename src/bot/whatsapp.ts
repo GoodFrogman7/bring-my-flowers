@@ -254,9 +254,9 @@ export class WhatsAppBot implements MessageSender {
     }
 
     try {
-      // Ensure phone number format
-      const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-      
+      // Phone numbers may arrive as "+91 97..." but a JID is bare digits.
+      const jid = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+
       await this.sock.sendMessage(jid, { text: message });
       
       logger.info({ to, message }, 'Message sent');
@@ -279,7 +279,7 @@ export class WhatsAppBot implements MessageSender {
     };
 
     try {
-      const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+      const jid = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
       const fileName = path.basename(filePath);
       await this.sock.sendMessage(jid, {
         document: fs.readFileSync(filePath),

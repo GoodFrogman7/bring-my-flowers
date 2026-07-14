@@ -35,12 +35,13 @@ export class DailySummaryGenerator {
     // Schedule cron job: minute hour * * *
     const cronExpression = `${minute} ${hour} * * *`;
     
+    // The business runs on IST regardless of the host machine's clock.
     this.cronJob = cron.schedule(cronExpression, async () => {
       logger.info('Daily summary cron job triggered');
       await this.generateAndSendSummary();
-    });
+    }, { timezone: 'Asia/Kolkata' });
 
-    logger.info({ schedule: cronExpression, time: this.summaryTime }, 'Daily summary scheduler started');
+    logger.info({ schedule: cronExpression, time: this.summaryTime, timezone: 'Asia/Kolkata' }, 'Daily summary scheduler started');
   }
 
   stop(): void {

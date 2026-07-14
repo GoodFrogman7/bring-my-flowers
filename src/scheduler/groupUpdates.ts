@@ -13,8 +13,10 @@ export interface GroupUpdatesOptions {
   groupJid: string;
   ollama?: OllamaClient;
   delSheetDir?: string;
-  /** HH:mm — after the day's group chatter, before staff pull tomorrow's sheet. */
+  /** HH:mm IST — after the day's group chatter, before staff pull tomorrow's sheet. */
   processTime?: string;
+  /** Numbers that get their own DM copy of the nightly sheet (the owner). */
+  ownerDm?: string[];
   today?: () => string;
 }
 
@@ -22,6 +24,9 @@ function cronFor(time: string): string {
   const [hour, minute] = time.split(':').map(Number);
   return `${minute} ${hour} * * *`;
 }
+
+/** The business runs on IST regardless of where the host laptop's clock is set. */
+const TIMEZONE = 'Asia/Kolkata';
 
 /**
  * Nightly summarizer for the "Updates" WhatsApp group: applies what the day's
@@ -43,8 +48,8 @@ export class GroupUpdatesScheduler {
     this.job = cron.schedule(cronFor(processTime), async () => {
       logger.info('Group-updates processing triggered');
       await this.runOnce();
-    });
-    logger.info({ processTime }, 'Group updates scheduler started');
+    }, { timezone: TIMEZONE });
+    logger.info({ processTime, timezone: TIMEZONE }, 'Group updates scheduler started');
   }
 
   stop(): void {
@@ -54,7 +59,7 @@ export class GroupUpdatesScheduler {
   }
 
   async runOnce(): Promise<void> {
-    const { db, sender, groupJid, ollama, delSheetDir } = this.options;
+    const { db, sender, groupJid, ollama, delSheetDir, ownerDm } = this.options;
     const today = this.today();
     const tomorrow = addDays(today, 1);
 
@@ -75,6 +80,16 @@ export class GroupUpdatesScheduler {
     } else {
       await sender.sendMessage(groupJid, `${caption}\n→ ${outPath}`);
     }
-    logger.info({ ...result, escalated: result.escalated.length, sheetRows: sheet.rows }, 'Group updates run complete');
+
+    // The owner gets his own copy of summary + sheet, so he never has to dig
+    // through the group's chatter for it.
+    for (const owner of ownerDm ?? []) {
+      await sender.sendMessage(owner, summary);
+      if (sender.sendDocument) {
+        const sent = await sender.sendDocument(owner, outPath, caption);
+        if (!sent) await sender.sendMessage(owner, `${caption}\n(⚠️ file send failed — it is saved at ${outPath})`);
+      }
+    }
+    logger.info({ ...result, escalated: result.escalated.length, sheetRows: sheet.rows, ownerDm: ownerDm?.length ?? 0 }, 'Group updates run complete');
   }
 }

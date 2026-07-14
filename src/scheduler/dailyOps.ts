@@ -45,17 +45,18 @@ export class DailyOpsScheduler {
     const recurringTime = this.options.recurringTime || '07:00';
     const reminderTime = this.options.reminderTime || '08:30';
 
+    // The business runs on IST regardless of the host machine's clock.
     this.jobs.push(cron.schedule(cronFor(recurringTime), async () => {
       logger.info('Recurring-order materialization triggered');
       await this.runRecurringOnce();
-    }));
+    }, { timezone: 'Asia/Kolkata' }));
 
     this.jobs.push(cron.schedule(cronFor(reminderTime), async () => {
       logger.info('Delivery reminder run triggered');
       await this.runRemindersOnce();
-    }));
+    }, { timezone: 'Asia/Kolkata' }));
 
-    logger.info({ recurringTime, reminderTime }, 'Daily ops scheduler started');
+    logger.info({ recurringTime, reminderTime, timezone: 'Asia/Kolkata' }, 'Daily ops scheduler started');
   }
 
   stop(): void {

@@ -139,7 +139,8 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
         groupJid: updatesGroupJid,
         ollama: ollamaClient,
         delSheetDir: './data',
-        processTime: process.env.UPDATES_PROCESS_TIME
+        processTime: process.env.UPDATES_PROCESS_TIME,
+        ownerDm: config.whatsapp.owners
       });
       groupScheduler.start();
       logger.info({ updatesGroupJid }, '✓ "Updates" group ingestion active');

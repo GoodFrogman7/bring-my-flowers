@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, BusinessDb } from '../src/business/db';
 import { insertGroupMessage, processGroupMessages, formatGroupSummary } from '../src/business/groupUpdates';
 import { dueRows } from '../src/business/delSheet';
+import { GroupUpdatesScheduler } from '../src/scheduler/groupUpdates';
+import { MessageSender } from '../src/bot/messageSender';
 
 const TODAY = '2026-07-06'; // Monday
 const TOMORROW = '2026-07-07';
@@ -101,6 +103,39 @@ describe('processGroupMessages', () => {
     // Only one audit row and one HOLD application, not two
     const logCount = (db.prepare(`SELECT COUNT(*) AS n FROM group_update_log`).get() as { n: number }).n;
     expect(logCount).toBe(1);
+  });
+});
+
+describe('GroupUpdatesScheduler.runOnce', () => {
+  it('applies staged updates, posts summary + sheet to the group, and DMs the owner a copy', async () => {
+    const sent: Array<{ to: string; message: string }> = [];
+    const docs: Array<{ to: string; filePath: string }> = [];
+    const sender: MessageSender = {
+      async sendMessage(to, message) { sent.push({ to, message }); return true; },
+      async sendMessageToMultiple() { /* not used */ },
+      isConnected: () => true,
+      async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
+    };
+    insertGroupMessage(db, '919999999999', 'Hold Neeraj Rathore payment not received', '2026-07-06T10:00:00.000Z');
+
+    const scheduler = new GroupUpdatesScheduler({
+      db, sender, groupJid: 'g@g.us', ownerDm: ['+919717173327'],
+      delSheetDir: './data', today: () => TODAY
+    });
+    await scheduler.runOnce();
+
+    // The staged hold was applied before the sheet was generated
+    const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;
+    expect(status).toBe('HOLD');
+
+    // Group gets the summary and the sheet file
+    expect(sent.filter(m => m.to === 'g@g.us')).toHaveLength(1);
+    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
+
+    // The owner gets his own DM copy of both
+    expect(sent.filter(m => m.to === '+919717173327')).toHaveLength(1);
+    expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(1);
+    expect(docs[0].filePath).toContain(`del-sheet-${TOMORROW}.xlsx`);
   });
 });
 
