@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import * as fs from 'fs';
 import { openDb, BusinessDb } from '../src/business/db';
-import { insertGroupMessage, processGroupMessages, formatGroupSummary } from '../src/business/groupUpdates';
+import {
+  extractPhone,
+  formatGroupSummary,
+  insertGroupMessage,
+  parseOneOffOrder,
+  processGroupMessages
+} from '../src/business/groupUpdates';
 import { dueRows } from '../src/business/delSheet';
 import { GroupUpdatesScheduler } from '../src/scheduler/groupUpdates';
 import { MessageSender } from '../src/bot/messageSender';
@@ -30,8 +37,39 @@ beforeEach(() => {
 });
 
 describe('processGroupMessages', () => {
+  it('parses a complete multiline order without crossing phone lines', () => {
+    const text = `From Faisal Khan today
+Immediately
+To
+Saif Khan, P-604, Emaar Enclave, Sector-66
+Ph - 9892055569
+10 mix oriental
+15 shaded purple carnations
+Gypso, limonium and greens
+Bouquet in simple Korean wrap
+Do not ask for payment`;
+    const order = parseOneOffOrder(text, TODAY);
+
+    expect(order.missing).toEqual([]);
+    expect(order.phone).toBe('9892055569');
+    expect(order.customerName).toBe('Saif Khan');
+    expect(order.date).toBe(TODAY);
+    expect(order.timeSlot).toBe('Immediately');
+    expect(order.address).toContain('Emaar Enclave');
+    expect(order.paymentStatus).toBe('COMPLIMENTARY');
+  });
+
+  it('never treats a WhatsApp mention ID as a phone', () => {
+    expect(extractPhone('@161847957311493\nSend after 5')).toBeNull();
+  });
+
   it('creates a one-off order for a new-order message with a phone number', async () => {
-    insertGroupMessage(db, '919999999999', 'Send tomorrow morning by 10 positively to Chandrima +919888877766, H-9 Sector 10', '2026-07-06T10:00:00.000Z');
+    insertGroupMessage(
+      db,
+      '919999999999',
+      'Send tomorrow morning by 10 positively to Chandrima +919888877766\nH-9 Sector 10\n2 oriental lilies',
+      '2026-07-06T10:00:00.000Z'
+    );
     const result = await processGroupMessages(db, TODAY);
 
     expect(result.processed).toBe(1);
@@ -49,6 +87,45 @@ describe('processGroupMessages', () => {
     expect(rows.some(r => r.name === 'Chandrima')).toBe(true);
   });
 
+  it('is idempotent when the same staged message is processed twice', async () => {
+    insertGroupMessage(
+      db,
+      'staff',
+      'Send today to Chandrima +919888877766\nH-9 Sector 10\n2 oriental lilies',
+      '2026-07-06T10:00:00.000Z'
+    );
+
+    await processGroupMessages(db, TODAY);
+    const second = await processGroupMessages(db, TODAY);
+
+    expect(second.processed).toBe(0);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM one_time_orders`).get() as { n: number }).n).toBe(1);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM group_update_log`).get() as { n: number }).n).toBe(1);
+  });
+
+  it('rolls back a failed action and records it for review', async () => {
+    db.exec(`
+      CREATE TRIGGER reject_test_order
+      BEFORE INSERT ON one_time_orders
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated action failure');
+      END;
+    `);
+    insertGroupMessage(
+      db,
+      'staff',
+      'Send today to Chandrima +919888877766\nH-9 Sector 10\n2 oriental lilies',
+      '2026-07-06T10:00:00.000Z'
+    );
+
+    const result = await processGroupMessages(db, TODAY);
+
+    expect(result.escalated[0].reason).toMatch(/transaction failed/i);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM one_time_orders`).get() as { n: number }).n).toBe(0);
+    expect((db.prepare(`SELECT processed_at FROM group_messages`).get() as { processed_at: string }).processed_at).toBe(TODAY);
+    expect((db.prepare(`SELECT classification FROM group_update_log`).get() as { classification: string }).classification).toBe('UNCLEAR');
+  });
+
   it('applies HOLD_INDEFINITE for an unambiguous named customer instruction', async () => {
     insertGroupMessage(db, '919999999999', 'Hold Neeraj Rathore is payment not received', '2026-07-06T10:00:00.000Z');
     const result = await processGroupMessages(db, TODAY);
@@ -61,6 +138,55 @@ describe('processGroupMessages', () => {
     const log = db.prepare(`SELECT * FROM group_update_log`).get() as { classification: string; matched_customer_id: string };
     expect(log.classification).toBe('CUSTOMER_UPDATE');
     expect(log.matched_customer_id).toBe('100');
+  });
+
+  it('does not resume subscriptions for bouquet instructions', async () => {
+    db.prepare(`INSERT INTO customers (id, name, phones, address, zone) VALUES ('104', 'Asha Esther', '', 'A-1', 'Zone A')`).run();
+    db.prepare(`INSERT INTO subscriptions (id, customer_id, package_name, pack_amount, frequency, day, status)
+                VALUES (104, '104', 'Joy', 1950, 'WEEKLY', 'Monday', 'HOLD')`).run();
+    insertGroupMessage(db, 'staff', 'Send some extra flowers to Asha Esther next', '2026-07-06T10:00:00.000Z');
+
+    const result = await processGroupMessages(db, TODAY);
+
+    expect(result.escalated).toHaveLength(1);
+    expect(result.customerUpdates).toBe(0);
+    expect((db.prepare(`SELECT status FROM subscriptions WHERE id = 104`).get() as { status: string }).status).toBe('HOLD');
+  });
+
+  it('quarantines subscription starts even when they contain a phone', async () => {
+    insertGroupMessage(db, 'staff', 'Samia\nStart with Joy from Saturday\n+91 99100 22591', '2026-07-06T10:00:00.000Z');
+
+    const result = await processGroupMessages(db, TODAY);
+
+    expect(result.oneOffOrders).toBe(0);
+    expect(result.escalated[0].reason).toMatch(/subscription/i);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM one_time_orders`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('merges explicitly quoted pending messages once', async () => {
+    insertGroupMessage(
+      db,
+      'staff',
+      'From Srishti today\nNeed to send to\nNimisha\n+91 9829636216\nW2B 103 Wellington estate 2\n2 pink oriental lilies\nAmount 700',
+      '2026-07-06T10:00:00.000Z',
+      { externalMessageId: 'parent' }
+    );
+    insertGroupMessage(
+      db,
+      'staff',
+      'Before 2:30',
+      '2026-07-06T10:00:10.000Z',
+      { externalMessageId: 'child', replyToExternalId: 'parent' }
+    );
+
+    const result = await processGroupMessages(db, TODAY);
+    const order = db.prepare(`SELECT * FROM one_time_orders`).get() as { time_slot: string; amount: number };
+
+    expect(result.processed).toBe(2);
+    expect(result.oneOffOrders).toBe(1);
+    expect(order.time_slot).toBe('Before 2:30');
+    expect(order.amount).toBe(700);
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM group_update_log`).get() as { n: number }).n).toBe(2);
   });
 
   it('appends a note without mutating schedule for non-action staff shorthand', async () => {
@@ -107,7 +233,14 @@ describe('processGroupMessages', () => {
 });
 
 describe('GroupUpdatesScheduler.runOnce', () => {
-  it('posts summary + sheet to the group but DMs only the sheet to the owner', async () => {
+  it('processes updates and writes the sheet locally without WhatsApp spam by default', async () => {
+    const prevDm = process.env.OWNER_SHEET_DM;
+    const prevGroup = process.env.GROUP_SHEET_SEND;
+    const prevSummary = process.env.GROUP_NIGHTLY_SUMMARY;
+    delete process.env.OWNER_SHEET_DM;
+    delete process.env.GROUP_SHEET_SEND;
+    delete process.env.GROUP_NIGHTLY_SUMMARY;
+
     const sent: Array<{ to: string; message: string }> = [];
     const docs: Array<{ to: string; filePath: string }> = [];
     const sender: MessageSender = {
@@ -124,18 +257,43 @@ describe('GroupUpdatesScheduler.runOnce', () => {
     });
     await scheduler.runOnce();
 
-    // The staged hold was applied before the sheet was generated
     const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;
     expect(status).toBe('HOLD');
 
-    // Group gets the summary and the sheet file
-    expect(sent.filter(m => m.to === 'g@g.us')).toHaveLength(1);
-    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
+    // Quiet by default: sheet is for the dashboard, not WhatsApp
+    expect(sent).toHaveLength(0);
+    expect(docs).toHaveLength(0);
+    expect(fs.existsSync(`./data/del-sheet-${TOMORROW}.xlsx`)).toBe(true);
 
-    // The owner gets only the sheet; no summary or fallback text is sent by DM
-    expect(sent.filter(m => m.to === '+919717173327')).toHaveLength(0);
+    if (prevDm === undefined) delete process.env.OWNER_SHEET_DM; else process.env.OWNER_SHEET_DM = prevDm;
+    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
+    if (prevSummary === undefined) delete process.env.GROUP_NIGHTLY_SUMMARY; else process.env.GROUP_NIGHTLY_SUMMARY = prevSummary;
+  });
+
+  it('can still DM the sheet when OWNER_SHEET_DM=1 and GROUP_SHEET_SEND=1', async () => {
+    const prevDm = process.env.OWNER_SHEET_DM;
+    const prevGroup = process.env.GROUP_SHEET_SEND;
+    process.env.OWNER_SHEET_DM = '1';
+    process.env.GROUP_SHEET_SEND = '1';
+    const docs: Array<{ to: string; filePath: string }> = [];
+    const sender: MessageSender = {
+      async sendMessage() { return true; },
+      async sendMessageToMultiple() { /* not used */ },
+      isConnected: () => true,
+      async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
+    };
+
+    const scheduler = new GroupUpdatesScheduler({
+      db, sender, groupJid: 'g@g.us', ownerDm: ['+919717173327'],
+      delSheetDir: './data', today: () => TODAY
+    });
+    await scheduler.runOnce();
+
+    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
     expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(1);
-    expect(docs[0].filePath).toContain(`del-sheet-${TOMORROW}.xlsx`);
+
+    if (prevDm === undefined) delete process.env.OWNER_SHEET_DM; else process.env.OWNER_SHEET_DM = prevDm;
+    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
   });
 });
 

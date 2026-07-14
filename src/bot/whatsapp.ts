@@ -14,11 +14,29 @@ import logger from '../utils/logger';
 import { Boom } from '@hapi/boom';
 import { MessageSender } from './messageSender';
 
+export interface IncomingGroupMessageMetadata {
+  externalMessageId?: string;
+  replyToExternalId?: string;
+  receivedAt: string;
+}
+
+export interface WhatsAppHealth {
+  connected: boolean;
+  linked: boolean;
+  lastError: string | null;
+  lastDisconnectStatus: number | null;
+  reconnectAttempts: number;
+  latestQr: string | null;
+  updatesGroupJid: string | null;
+}
+
 /**
  * How long a disconnect may last before the process gives up and exits.
  * Generous: a full reconnect cycle (10 attempts × 5s) fits several times over.
  */
 const RECONNECT_WATCHDOG_MS = 3 * 60 * 1000;
+/** If we never come online for this long after a drop, exit for launcher restart. */
+const DISCONNECT_EXIT_MS = 5 * 60 * 1000;
 
 export class WhatsAppBot implements MessageSender {
   private sock: WASocket | null = null;
@@ -27,11 +45,20 @@ export class WhatsAppBot implements MessageSender {
   private maxReconnectAttempts: number;
   private reconnectAttempts: number = 0;
   private messageHandler: ((from: string, message: string) => Promise<void>) | null = null;
-  private groupMessageHandler: ((participant: string, message: string) => Promise<void>) | null = null;
+  private groupMessageHandler: ((
+    participant: string,
+    message: string,
+    metadata: IncomingGroupMessageMetadata
+  ) => Promise<void>) | null = null;
   private connected: boolean = false;
   private updatesGroupJid?: string;
   private pairingRequested: boolean = false;
   private reconnectWatchdog: NodeJS.Timeout | null = null;
+  private disconnectExitTimer: NodeJS.Timeout | null = null;
+  private lastError: string | null = null;
+  private lastDisconnectStatus: number | null = null;
+  private latestQr: string | null = null;
+  private starting: boolean = false;
 
   constructor(
     sessionPath: string,
@@ -45,13 +72,54 @@ export class WhatsAppBot implements MessageSender {
     this.updatesGroupJid = updatesGroupJid;
   }
 
-  async start(): Promise<void> {
+  getHealth(): WhatsAppHealth {
+    return {
+      connected: this.connected,
+      linked: fs.existsSync(path.join(this.sessionPath, 'creds.json')),
+      lastError: this.lastError,
+      lastDisconnectStatus: this.lastDisconnectStatus,
+      reconnectAttempts: this.reconnectAttempts,
+      latestQr: this.latestQr,
+      updatesGroupJid: this.updatesGroupJid ?? null
+    };
+  }
+
+  /** Tear down the previous socket before a reconnect so listeners do not stack. */
+  private async destroySocket(): Promise<void> {
+    if (!this.sock) return;
     try {
+      this.sock.ev.removeAllListeners('connection.update');
+      this.sock.ev.removeAllListeners('creds.update');
+      this.sock.ev.removeAllListeners('messages.upsert');
+      this.sock.end(undefined);
+    } catch (error) {
+      logger.warn({ error }, 'Error while tearing down WhatsApp socket');
+    }
+    this.sock = null;
+  }
+
+  private quarantineSession(reason: string): void {
+    try {
+      if (!fs.existsSync(this.sessionPath)) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const dest = path.join(path.dirname(this.sessionPath), `sessions-quarantine-${stamp}`);
+      fs.renameSync(this.sessionPath, dest);
+      fs.mkdirSync(this.sessionPath, { recursive: true });
+      logger.error({ dest, reason }, 'WhatsApp session quarantined — scan QR again on /link');
+    } catch (error) {
+      logger.error({ error, reason }, 'Failed to quarantine WhatsApp session');
+    }
+  }
+
+  async start(): Promise<void> {
+    if (this.starting) return;
+    this.starting = true;
+    try {
+      await this.destroySocket();
       this.pairingRequested = false;
+      fs.mkdirSync(this.sessionPath, { recursive: true });
       const { state, saveCreds } = await useMultiFileAuthState(this.sessionPath);
 
-      // WhatsApp rejects registration (405) when the advertised WA Web
-      // version is stale — always fetch the current one at startup.
       const { version } = await fetchLatestBaileysVersion();
       logger.info({ version }, 'Using WhatsApp Web version');
 
@@ -64,30 +132,43 @@ export class WhatsAppBot implements MessageSender {
         printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
         logger: logger as any,
-        getMessage: async (key) => {
-          return { conversation: '' };
-        }
+        getMessage: async () => ({ conversation: '' })
       });
 
-      // QR Code handler
       this.sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-          logger.info('QR Code received. Scan with WhatsApp:');
+          this.latestQr = qr;
+          logger.info('QR Code received. Scan with WhatsApp (also on http://localhost:8787/link):');
           QRCode.generate(qr, { small: true });
           await this.maybeRequestPairingCode();
         }
 
         if (connection === 'close') {
           this.connected = false;
-          const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-          
-          logger.warn({
-            shouldReconnect,
-            statusCode: (lastDisconnect?.error as Boom)?.output?.statusCode,
-            error: lastDisconnect?.error
-          }, 'Connection closed');
+          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          this.lastDisconnectStatus = statusCode ?? null;
+          this.lastError = (lastDisconnect?.error as Error)?.message ?? 'Connection closed';
+          const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const replaced = statusCode === DisconnectReason.connectionReplaced;
+          const shouldReconnect = !loggedOut;
+
+          logger.warn({ shouldReconnect, statusCode, error: lastDisconnect?.error, replaced }, 'Connection closed');
+
+          if (loggedOut) {
+            this.clearReconnectWatchdog();
+            this.clearDisconnectExitTimer();
+            this.quarantineSession('loggedOut');
+            logger.error('Logged out from WhatsApp — exiting so the launcher restarts for a fresh QR.');
+            process.exit(1);
+          }
+
+          if (replaced) {
+            this.lastError = 'WhatsApp opened elsewhere (conflict). Close other linked sessions or wait for reconnect.';
+          }
+
+          this.armDisconnectExitTimer();
 
           if (shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
@@ -107,41 +188,36 @@ export class WhatsAppBot implements MessageSender {
           } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             logger.error('Max reconnect attempts reached — exiting so the launcher restarts a fresh process.');
             process.exit(1);
-          } else {
-            logger.error('Logged out from WhatsApp. Please delete sessions folder and restart.');
           }
         }
 
         if (connection === 'open') {
           this.connected = true;
           this.reconnectAttempts = 0;
+          this.latestQr = null;
+          this.lastError = null;
           this.clearReconnectWatchdog();
+          this.clearDisconnectExitTimer();
           logger.info('WhatsApp connection established successfully! 🎉');
         }
       });
 
-      // Save credentials on update
       this.sock.ev.on('creds.update', saveCreds);
 
-      // Message handler
       this.sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
           await this.handleIncomingMessage(msg);
         }
       });
-
     } catch (error) {
+      this.lastError = (error as Error).message;
       logger.error({ error }, 'Failed to start WhatsApp bot');
       throw error;
+    } finally {
+      this.starting = false;
     }
   }
 
-  /**
-   * A reconnect can hang without ever emitting another connection.update
-   * (seen 2026-07-12: stream error 515 → "attempt 1" logged → silence for
-   * 25 hours). The launcher only restarts us when the process exits, so if
-   * we aren't back online within the window, exit and let it.
-   */
   private armReconnectWatchdog(): void {
     if (this.reconnectWatchdog) return;
     this.reconnectWatchdog = setTimeout(() => {
@@ -160,11 +236,24 @@ export class WhatsAppBot implements MessageSender {
     }
   }
 
-  /**
-   * Alternative to QR scanning: when PAIRING_NUMBER is set, ask WhatsApp for
-   * an 8-character code the owner types in via Linked Devices → "Link with
-   * phone number instead". Requested once per connection attempt.
-   */
+  private armDisconnectExitTimer(): void {
+    if (this.disconnectExitTimer) return;
+    this.disconnectExitTimer = setTimeout(() => {
+      this.disconnectExitTimer = null;
+      if (!this.connected) {
+        logger.error({ windowMs: DISCONNECT_EXIT_MS }, 'Disconnected too long — exiting for launcher restart');
+        process.exit(1);
+      }
+    }, DISCONNECT_EXIT_MS);
+  }
+
+  private clearDisconnectExitTimer(): void {
+    if (this.disconnectExitTimer) {
+      clearTimeout(this.disconnectExitTimer);
+      this.disconnectExitTimer = null;
+    }
+  }
+
   private async maybeRequestPairingCode(): Promise<void> {
     const raw = process.env.PAIRING_NUMBER;
     if (!raw || this.pairingRequested || !this.sock || this.sock.authState.creds.registered) return;
@@ -184,53 +273,48 @@ export class WhatsAppBot implements MessageSender {
 
   private async handleIncomingMessage(msg: proto.IWebMessageInfo): Promise<void> {
     try {
-      // Log group JIDs even for own-account messages, so UPDATES_GROUP_JID can
-      // be discovered by the owner texting the group from the linked number.
       if (msg.key.fromMe && msg.key.remoteJid?.endsWith('@g.us') && msg.key.remoteJid !== this.updatesGroupJid) {
         logger.info({ groupJid: msg.key.remoteJid }, 'Ignored message from non-whitelisted group');
       }
 
-      // Ignore if message is from self or status broadcast
       if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') return;
 
-      // Whitelisted exception: the one "Updates" ops group, if configured.
-      // Every other group stays ignored below exactly as before.
       if (this.updatesGroupJid && msg.key.remoteJid === this.updatesGroupJid) {
         const participant = msg.key.participant;
-        if (!participant) return; // system/announce messages can lack a participant
+        if (!participant) return;
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text || !this.groupMessageHandler) return;
-        await this.groupMessageHandler(participant.split('@')[0], text);
+        const rawTimestamp = msg.messageTimestamp;
+        const timestampSeconds = typeof rawTimestamp === 'number'
+          ? rawTimestamp
+          : Number(rawTimestamp?.toString() || '0');
+        const receivedAt = timestampSeconds > 0
+          ? new Date(timestampSeconds * 1000).toISOString()
+          : new Date().toISOString();
+        await this.groupMessageHandler(participant.split('@')[0], text, {
+          externalMessageId: msg.key.id ?? undefined,
+          replyToExternalId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
+          receivedAt
+        });
         return;
       }
 
-      // Ignore group chats: the handlers model 1:1 conversations, and a group
-      // jid would be mistaken for a customer phone (the bot would greet the
-      // whole ops group). Logged so a group's JID can be found and whitelisted
-      // via UPDATES_GROUP_JID (see .env.example) without any special tooling.
       if (msg.key.remoteJid?.endsWith('@g.us')) {
         logger.info({ groupJid: msg.key.remoteJid }, 'Ignored message from non-whitelisted group');
         return;
       }
 
-      // Extract message text
       const messageText = msg.message?.conversation ||
                          msg.message?.extendedTextMessage?.text ||
                          '';
 
       if (!messageText) return;
 
-      // Get sender's phone number
       const from = msg.key.remoteJid || '';
       const phoneNumber = from.split('@')[0];
 
-      // No handler registered means 1:1 chats are intentionally hands-off —
-      // don't even log personal chat contents.
       if (this.messageHandler) {
-        logger.info({
-          from: phoneNumber,
-          message: messageText
-        }, 'Message received');
+        logger.info({ from: phoneNumber, message: messageText }, 'Message received');
         await this.messageHandler(phoneNumber, messageText);
       }
     } catch (error) {
@@ -242,8 +326,11 @@ export class WhatsAppBot implements MessageSender {
     this.messageHandler = handler;
   }
 
-  /** Registers the handler for the whitelisted "Updates" group only (see updatesGroupJid). */
-  onGroupMessage(handler: (participant: string, message: string) => Promise<void>): void {
+  onGroupMessage(handler: (
+    participant: string,
+    message: string,
+    metadata: IncomingGroupMessageMetadata
+  ) => Promise<void>): void {
     this.groupMessageHandler = handler;
   }
 
@@ -254,11 +341,8 @@ export class WhatsAppBot implements MessageSender {
     }
 
     try {
-      // Phone numbers may arrive as "+91 97..." but a JID is bare digits.
       const jid = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-
       await this.sock.sendMessage(jid, { text: message });
-      
       logger.info({ to, message }, 'Message sent');
       return true;
     } catch (error) {
@@ -298,7 +382,6 @@ export class WhatsAppBot implements MessageSender {
   async sendMessageToMultiple(recipients: string[], message: string): Promise<void> {
     for (const recipient of recipients) {
       await this.sendMessage(recipient, message);
-      // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -308,12 +391,17 @@ export class WhatsAppBot implements MessageSender {
   }
 
   async disconnect(): Promise<void> {
+    this.clearReconnectWatchdog();
+    this.clearDisconnectExitTimer();
     if (this.sock) {
-      await this.sock.logout();
+      try {
+        await this.sock.logout();
+      } catch {
+        await this.destroySocket();
+      }
       this.sock = null;
       this.connected = false;
       logger.info('WhatsApp bot disconnected');
     }
   }
 }
-

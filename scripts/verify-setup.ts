@@ -1,6 +1,7 @@
 /**
  * Verification script to check if everything is set up correctly
  */
+import 'dotenv/config';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -112,9 +113,9 @@ async function verifySetup() {
       );
       check(
         'Ollama Model',
-        config.ollama?.model === 'llama3',
-        '✓ Ollama model set to llama3',
-        '⚠ Ollama model not llama3'
+        config.ollama?.model === (process.env.OLLAMA_MODEL || config.ollama?.model),
+        `✓ Ollama model set to ${config.ollama?.model}`,
+        `⚠ Config model ${config.ollama?.model} differs from OLLAMA_MODEL=${process.env.OLLAMA_MODEL}`
       );
     } catch (e) {
       check(
@@ -161,7 +162,8 @@ async function verifySetup() {
   if (allPassed) {
     console.log('✅ All checks passed! You\'re ready to start the bot.\n');
     console.log('Next steps:');
-    console.log('1. Make sure Ollama has llama3 model: ollama pull llama3');
+    const configuredModel = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+    console.log(`1. Make sure Ollama has the configured model: ollama pull ${configuredModel}`);
     console.log('2. Configure owner numbers in .env file');
     console.log('3. Start the bot: npm start');
     console.log('4. Scan QR code with WhatsApp\n');

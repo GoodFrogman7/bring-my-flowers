@@ -1,5 +1,5 @@
 import { parseDayOfWeek } from '../utils/recurrence';
-import { addDays } from './dates';
+import { addDays, nextWeekdayAfter } from './dates';
 
 /**
  * Deterministic parser for the ~16 fixed customer-instruction types the owner
@@ -58,9 +58,12 @@ function parseWeeks(text: string): number | null {
   return null;
 }
 
-/** "tomorrow", "on the 20th" → YYYY-MM-DD relative to `today`; null if none. */
+/** Natural delivery date → YYYY-MM-DD relative to `today`; null if none. */
 export function parseTargetDate(text: string, today: string): string | null {
+  if (/\b(today|aaj|immediately|asap|right away)\b/.test(text)) return today;
   if (/\b(tomorrow|kal)\b/.test(text)) return addDays(today, 1);
+  const weekday = parseDayOfWeek(text);
+  if (weekday !== null) return nextWeekdayAfter(today, weekday);
   const dayOfMonth = text.match(/\bon\s+(?:the\s+)?([1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\b/);
   if (dayOfMonth) {
     const target = parseInt(dayOfMonth[1], 10);

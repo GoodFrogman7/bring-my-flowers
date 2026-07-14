@@ -129,6 +129,27 @@ describe('GroupAssistant.handle', () => {
     expect((db.prepare(`SELECT COUNT(*) n FROM group_messages`).get() as { n: number }).n).toBe(2);
   });
 
+  it('preserves WhatsApp message IDs, timestamps and quoted-message references', async () => {
+    const assistant = new GroupAssistant({
+      db, sender: fakeSender([], []), groupJid: 'g@g.us', today: () => TODAY
+    });
+
+    await assistant.handle('919999999999', 'Before 2:30', {
+      receivedAt: '2026-07-06T10:00:10.000Z',
+      externalMessageId: 'child-message',
+      replyToExternalId: 'parent-message'
+    });
+
+    const stored = db.prepare(`
+      SELECT received_at, external_message_id, reply_to_external_id FROM group_messages
+    `).get() as { received_at: string; external_message_id: string; reply_to_external_id: string };
+    expect(stored).toEqual({
+      received_at: '2026-07-06T10:00:10.000Z',
+      external_message_id: 'child-message',
+      reply_to_external_id: 'parent-message'
+    });
+  });
+
   it('processes staged updates then sends the sheet as a document', async () => {
     const sent: Array<{ to: string; message: string }> = [];
     const docs: Array<{ to: string; filePath: string }> = [];

@@ -15,9 +15,37 @@ export interface GroupUpdatesOptions {
   delSheetDir?: string;
   /** HH:mm IST — after the day's group chatter, before staff pull tomorrow's sheet. */
   processTime?: string;
-  /** Numbers that get only the nightly sheet file by DM (the owner). */
+  /**
+   * Optional personal DMs of the nightly sheet. Default off.
+   * OWNER_SHEET_DM=1 required.
+   */
   ownerDm?: string[];
   today?: () => string;
+}
+
+/** Personal sheet DMs are off unless OWNER_SHEET_DM is explicitly enabled. */
+export function ownerSheetDmEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.OWNER_SHEET_DM || '0').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+/**
+ * Auto-posting the .xlsx into the Updates group is off by default.
+ * Sheets live on the owner dashboard; staff get the file only when they ask
+ * "Bot, send sheet". Set GROUP_SHEET_SEND=1 to restore nightly group upload.
+ */
+export function groupSheetSendEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.GROUP_SHEET_SEND || '0').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+/**
+ * Nightly auto-summary text in the Updates group. Off by default so the bot
+ * stays quiet unless invoked. Set GROUP_NIGHTLY_SUMMARY=1 to re-enable.
+ */
+export function groupNightlySummaryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.GROUP_NIGHTLY_SUMMARY || '0').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 function cronFor(time: string): string {
@@ -29,11 +57,10 @@ function cronFor(time: string): string {
 const TIMEZONE = 'Asia/Kolkata';
 
 /**
- * Nightly summarizer for the "Updates" WhatsApp group: applies what the day's
- * messages clearly resolve to, regenerates tomorrow's delivery sheet, and
- * posts a same-group summary so staff can cross-verify against the Master
- * sheet before the morning delivery run. Not a live system — see
- * src/business/groupUpdates.ts for the classify/apply logic.
+ * Nightly job: apply staged Updates-group messages, regenerate tomorrow's
+ * delivery sheet on disk for the owner dashboard. WhatsApp stays silent
+ * unless GROUP_NIGHTLY_SUMMARY / GROUP_SHEET_SEND / OWNER_SHEET_DM are on.
+ * On-demand "Bot, send sheet" is handled live by GroupAssistant.
  */
 export class GroupUpdatesScheduler {
   private job: cron.ScheduledTask | null = null;
@@ -64,31 +91,41 @@ export class GroupUpdatesScheduler {
     const tomorrow = addDays(today, 1);
 
     const result = await processGroupMessages(db, today, ollama);
-    // Always regenerate and send tomorrow's sheet — the group expects the file
-    // every night, even on days with no updates to apply.
     const outPath = `${delSheetDir ?? './data'}/del-sheet-${tomorrow}.xlsx`;
     const sheet = writeDelSheetDetailed(db, tomorrow, outPath);
 
-    const summary = formatGroupSummary(result, today);
-    await sender.sendMessage(groupJid, summary);
-
-    const caption = `📋 Delivery sheet for ${tomorrow} — ${sheet.rows} rows, ${sheet.autoAssigned} auto-assigned` +
+    const caption = `Delivery sheet for ${tomorrow} — ${sheet.rows} rows, ${sheet.autoAssigned} auto-assigned` +
       (sheet.manual.length > 0 ? `, ${sheet.manual.length} manual (see Procurement tab)` : '');
-    if (sender.sendDocument) {
-      const sent = await sender.sendDocument(groupJid, outPath, caption);
-      if (!sent) await sender.sendMessage(groupJid, `${caption}\n(⚠️ file send failed — it is saved at ${outPath})`);
-    } else {
-      await sender.sendMessage(groupJid, `${caption}\n→ ${outPath}`);
+
+    if (groupNightlySummaryEnabled()) {
+      await sender.sendMessage(groupJid, formatGroupSummary(result, today));
     }
 
-    // The owner receives only the sheet file. Summaries and all conversational
-    // responses remain in the Updates group.
-    for (const owner of ownerDm ?? []) {
+    if (groupSheetSendEnabled()) {
+      if (sender.sendDocument) {
+        const sent = await sender.sendDocument(groupJid, outPath, caption);
+        if (!sent) await sender.sendMessage(groupJid, `${caption}\n(file send failed — saved at ${outPath})`);
+      } else {
+        await sender.sendMessage(groupJid, `${caption}\n→ ${outPath}`);
+      }
+    }
+
+    const dmOwners = ownerSheetDmEnabled() ? (ownerDm ?? []) : [];
+    for (const owner of dmOwners) {
       if (sender.sendDocument) {
         const sent = await sender.sendDocument(owner, outPath, caption);
         if (!sent) logger.error({ owner, outPath }, 'Failed to DM nightly sheet to owner');
       }
     }
-    logger.info({ ...result, escalated: result.escalated.length, sheetRows: sheet.rows, ownerDm: ownerDm?.length ?? 0 }, 'Group updates run complete');
+
+    logger.info({
+      ...result,
+      escalated: result.escalated.length,
+      sheetRows: sheet.rows,
+      sheetPath: outPath,
+      groupSheetSend: groupSheetSendEnabled(),
+      groupNightlySummary: groupNightlySummaryEnabled(),
+      ownerDm: dmOwners.length
+    }, 'Group updates run complete (sheet on disk for dashboard)');
   }
 }

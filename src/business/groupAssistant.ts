@@ -3,6 +3,7 @@ import { MessageSender } from '../bot/messageSender';
 import { OllamaClient } from '../llm/ollama';
 import {
   insertGroupMessage,
+  GroupMessageMetadata,
   processGroupMessages,
   formatGroupSummary,
   extractPhone,
@@ -13,6 +14,8 @@ import { dueRows, writeDelSheetDetailed } from './delSheet';
 import { buildProcurement, loadFlowers } from './assignment';
 import { renewalsDue } from './paymentRun';
 import { todayIST, addDays } from './dates';
+import { LLMProvider } from '../llm/provider';
+import { answerQuestion, answerWithLocalTools } from './qaAgent';
 import logger from '../utils/logger';
 
 /**
@@ -105,12 +108,18 @@ function namedCustomerContext(db: BusinessDb, question: string, today: string): 
         JOIN cycles cy ON d.cycle_id = cy.id JOIN subscriptions s ON cy.subscription_id = s.id
         WHERE s.customer_id = ? AND d.status = 'PLANNED' AND date >= ? ORDER BY date LIMIT 1
       `).get(customer.id, today) as { date: string } | undefined;
+      const owed = db.prepare(`
+        SELECT COALESCE(SUM(cy.collect), 0) AS owed FROM cycles cy
+        JOIN subscriptions s ON cy.subscription_id = s.id
+        WHERE s.customer_id = ? AND cy.payment_status = 'PENDING' AND cy.collect > 0
+      `).get(customer.id) as { owed: number };
       const lines = [
         `address: ${customer.address} (${customer.zone})`,
         subscription
           ? `subscription: ${subscription.package_name} ₹${subscription.pack_amount} ${subscription.frequency} ${subscription.day} ${subscription.time_slot} — ${subscription.status}`
           : 'subscription: none',
-        `next delivery: ${nextDelivery?.date ?? 'none planned'}`
+        `next delivery: ${nextDelivery?.date ?? 'none planned'}`,
+        owed.owed > 0 ? `amount owed: ₹${owed.owed}` : 'amount owed: ₹0'
       ];
       blocks.push({ header: `#${customer.id} ${customer.name}`, lines });
     }
@@ -233,6 +242,8 @@ export interface GroupAssistantOptions {
   sender: MessageSender;
   groupJid: string;
   ollama?: OllamaClient;
+  /** Cloud LLM (Anthropic/OpenAI). When set, questions get refined and answered with read-only tools. */
+  provider?: LLMProvider;
   delSheetDir?: string;
   today?: () => string;
 }
@@ -245,7 +256,11 @@ export class GroupAssistant {
     this.today = options.today ?? todayIST;
   }
 
-  async handle(participant: string, text: string): Promise<void> {
+  async handle(
+    participant: string,
+    text: string,
+    metadata: GroupMessageMetadata & { receivedAt?: string } = {}
+  ): Promise<void> {
     const { db, sender, groupJid } = this.options;
     const today = this.today();
     const route = routeGroupMessage(text, today);
@@ -253,7 +268,13 @@ export class GroupAssistant {
     if (route.kind === 'UPDATE') {
       // If staff prefixed an operational instruction with "Bot", persist the
       // instruction itself so the nightly classifier still recognizes it.
-      insertGroupMessage(db, participant, text.trim().replace(BOT_CALL, '').trim(), new Date().toISOString());
+      insertGroupMessage(
+        db,
+        participant,
+        text.trim().replace(BOT_CALL, '').trim(),
+        metadata.receivedAt ?? new Date().toISOString(),
+        metadata
+      );
       return;
     }
 
@@ -269,8 +290,26 @@ export class GroupAssistant {
     }
   }
 
-  private async answer(question: string, today: string): Promise<string> {
-    const { db, ollama } = this.options;
+  async answer(question: string, today: string): Promise<string> {
+    const result = await this.answerDetailed(question, today);
+    return result.answer;
+  }
+
+  /** Same degradation chain, but exposes which layer produced the reply. */
+  async answerDetailed(question: string, today: string): Promise<{ answer: string; mode: string }> {
+    const { db, ollama, provider } = this.options;
+
+    if (provider) {
+      try {
+        return { answer: await answerQuestion({ provider, db, today }, question), mode: `cloud (${provider.name})` };
+      } catch (error) {
+        logger.warn({ error, provider: provider.name, question }, 'Cloud Q&A failed — falling back to local answering');
+      }
+    }
+
+    const local = answerWithLocalTools({ db, today }, question);
+    if (local) return { answer: local, mode: 'local-tools' };
+
     const snapshot = buildBusinessSnapshot(db, question, today);
     if (ollama) {
       try {
@@ -278,12 +317,12 @@ export class GroupAssistant {
           `DATA:\n${snapshot}\n\nSTAFF QUESTION: "${question}"\n\nAnswer:`,
           ANSWER_PROMPT
         );
-        if (reply) return reply;
+        if (reply) return { answer: reply, mode: 'ollama' };
       } catch (error) {
         logger.warn({ error, question }, 'Group Q&A LLM failed — using fallback');
       }
     }
-    return fallbackAnswer(db, question, today);
+    return { answer: fallbackAnswer(db, question, today), mode: 'fallback' };
   }
 
   /**

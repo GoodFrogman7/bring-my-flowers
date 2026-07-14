@@ -22,6 +22,9 @@ import { openDb } from './business/db';
 import { BusinessMessageHandler } from './business/businessHandler';
 import { GroupAssistant } from './business/groupAssistant';
 import { GroupUpdatesScheduler } from './scheduler/groupUpdates';
+import { createCloudProvider } from './llm/provider';
+import { startDashboard } from './dashboard/dashboard';
+import { acquireBusinessLock } from './utils/instanceLock';
 import { loadConfig, ensureDirectories } from './utils/config';
 import logger from './utils/logger';
 
@@ -85,6 +88,7 @@ function requireEnv(mode: BotMode, names: string[]): string[] {
  * commands for staff. The generic bot's Excel/Sheets stack stays untouched.
  */
 async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaClient: OllamaClient): Promise<void> {
+  const releaseLock = acquireBusinessLock('./data');
   const dbPath = process.env.BUSINESS_DB || './data/business.db';
   const db = openDb(dbPath);
 
@@ -99,8 +103,21 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
 
   const transport = (process.env.BUSINESS_TRANSPORT || 'baileys').toLowerCase();
   let bot: MessageSender & { disconnect(): Promise<void> };
+  let baileysBotRef: WhatsAppBot | null = null;
   let server: ReturnType<typeof createServer> | null = null;
   let groupScheduler: GroupUpdatesScheduler | undefined;
+
+  if (!(process.env.UPDATES_GROUP_JID || '').trim()) {
+    logger.warn('UPDATES_GROUP_JID is not set — Updates group ingestion will be inactive until you add it to .env');
+    console.warn('\n⚠️  UPDATES_GROUP_JID is empty. The bot will not read the Updates group until you set it.\n');
+  }
+
+  // Optional cloud LLM (Anthropic/OpenAI) for owner Q&A. Strictly read-only:
+  // it powers answers in the group and dashboard, never parsing or mutations.
+  const cloudProvider = createCloudProvider();
+  if (cloudProvider) {
+    logger.info({ provider: cloudProvider.name }, '✓ Cloud LLM enabled for owner Q&A (read-only tools)');
+  }
 
   const buildHandler = (sender: MessageSender) => new BusinessMessageHandler({
     db,
@@ -138,6 +155,7 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       updatesGroupJid
     );
     bot = baileysBot;
+    baileysBotRef = baileysBot;
     // This linked account is also used for personal chats. Business mode must
     // never inspect, reply to, or forward a 1:1 message. The Updates group is
     // the only inbound channel; changing this requires a code change.
@@ -151,9 +169,14 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
         sender: baileysBot,
         groupJid: updatesGroupJid,
         ollama: ollamaClient,
+        provider: cloudProvider ?? undefined,
         delSheetDir: './data'
       });
-      baileysBot.onGroupMessage((participant, message) => groupAssistant.handle(participant, message));
+      baileysBot.onGroupMessage((participant, message, metadata) =>
+        groupAssistant.handle(participant, message, metadata)
+      );
+      const sheetDmOn = (process.env.OWNER_SHEET_DM || '0').trim() === '1' ||
+        (process.env.OWNER_SHEET_DM || '').trim().toLowerCase() === 'true';
       groupScheduler = new GroupUpdatesScheduler({
         db,
         sender: baileysBot,
@@ -161,7 +184,8 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
         ollama: ollamaClient,
         delSheetDir: './data',
         processTime: process.env.UPDATES_PROCESS_TIME,
-        ownerDm: config.whatsapp.owners
+        // Personal DMs off by default — dashboard + Updates group are enough.
+        ownerDm: sheetDmOn ? config.whatsapp.owners : []
       });
       groupScheduler.start();
       logger.info({ updatesGroupJid }, '✓ "Updates" group ingestion active');
@@ -183,12 +207,43 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     }
   }
 
+  // Local owner dashboard (127.0.0.1 only). DASHBOARD_PORT=0 disables it.
+  const dashboardPort = parseInt(process.env.DASHBOARD_PORT || '8787');
+  let dashboardServer: ReturnType<typeof startDashboard> | null = null;
+  if (dashboardPort > 0) {
+    // The chat box shares the exact answer chain the group uses. A throwaway
+    // GroupAssistant works for any transport — answer() never touches the sender.
+    const qa = new GroupAssistant({
+      db,
+      sender: bot,
+      groupJid: 'dashboard-local',
+      ollama: ollamaClient,
+      provider: cloudProvider ?? undefined
+    });
+    dashboardServer = startDashboard({
+      db,
+      answer: (question, today) => qa.answer(question, today),
+      answerDetailed: (question, today) => qa.answerDetailed(question, today),
+      port: dashboardPort,
+      delSheetDir: './data',
+      sessionPath: config.whatsapp.sessionPath,
+      updatesGroupJid: process.env.UPDATES_GROUP_JID || null,
+      getWhatsAppHealth: () => baileysBotRef?.getHealth() ?? null,
+      qaMode: cloudProvider
+        ? `Cloud AI (${cloudProvider.name}) with read-only tools`
+        : 'Local read-only tools + Ollama fallback'
+    });
+  }
+
   logger.info('🎉 Business mode operational');
   console.log('\n=====================================================');
   console.log('🌸 Mode: business (the real subscription operation)');
   console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
   console.log(`📱 Transport: ${transport}`);
-  console.log(`📄 Nightly sheet DM: ${config.whatsapp.owners.length > 0 ? config.whatsapp.owners.join(', ') : '⚠️ none set (OWNER_NUMBERS)'}`);
+  console.log('📄 Nightly sheet: written for dashboard only (WhatsApp quiet unless Bot, send sheet)');
+  console.log('📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
+  console.log(`🧠 Owner Q&A: ${cloudProvider ? `cloud (${cloudProvider.name}) with read-only tools` : 'local Ollama + deterministic fallback'}`);
+  console.log(`🖥️ Dashboard: ${dashboardServer ? `http://localhost:${dashboardPort}` : 'disabled (DASHBOARD_PORT=0)'}`);
   console.log('=====================================================\n');
 
   const shutdown = async () => {
@@ -196,7 +251,9 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     groupScheduler?.stop();
     await bot.disconnect();
     server?.close();
+    dashboardServer?.close();
     db.close();
+    releaseLock();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

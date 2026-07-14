@@ -1,6 +1,7 @@
 /**
  * Test script to verify Ollama is working correctly
  */
+import 'dotenv/config';
 import { OllamaClient } from '../src/llm/ollama';
 
 async function testOllama() {
@@ -24,8 +25,23 @@ async function testOllama() {
     process.exit(1);
   }
 
+  // Health only proves the server is reachable. This also proves the selected
+  // model exists and can generate rather than silently falling back.
+  console.log(`Test 2: Model Generation (${model})`);
+  try {
+    const response = await client.generate(
+      'Reply with exactly: OK',
+      'Follow the instruction exactly and do not add punctuation.'
+    );
+    if (!response.trim()) throw new Error('Model returned an empty response');
+    console.log(`✓ Model response: ${response.trim()}\n`);
+  } catch (error) {
+    console.error(`❌ Model ${model} could not generate a response`, error);
+    process.exit(1);
+  }
+
   // Test 2: Message classification
-  console.log('Test 2: Message Classification');
+  console.log('Test 3: Message Classification');
   const testMessages = [
     'No delivery today please',
     'Can you deliver tomorrow instead?',
@@ -44,8 +60,8 @@ async function testOllama() {
     }
   }
 
-  // Test 3: Daily summary
-  console.log('Test 3: Daily Summary Generation');
+  // Test 4: Daily summary
+  console.log('Test 4: Daily Summary Generation');
   try {
     const summary = await client.generateDailySummary({
       date: new Date().toISOString().split('T')[0],

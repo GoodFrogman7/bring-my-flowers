@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS group_messages (
   participant TEXT NOT NULL DEFAULT '',
   message_text TEXT NOT NULL DEFAULT '',
   received_at TEXT NOT NULL DEFAULT '',
+  external_message_id TEXT NOT NULL DEFAULT '',
+  reply_to_external_id TEXT NOT NULL DEFAULT '',
   processed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_group_messages_unprocessed ON group_messages(processed_at);
@@ -162,15 +164,33 @@ CREATE TABLE IF NOT EXISTS group_update_log (
   matched_order_id TEXT,
   action_taken TEXT NOT NULL DEFAULT '',
   escalated INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT ''
+  escalation_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  resolved_at TEXT                    -- set when a human clears the review item
 );
 CREATE INDEX IF NOT EXISTS idx_group_update_log_message ON group_update_log(message_id);
+
+-- Append-only record of operator-approved corrections to automated actions.
+CREATE TABLE IF NOT EXISTS group_corrections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER REFERENCES group_messages(id),
+  correction_type TEXT NOT NULL,
+  target_id TEXT NOT NULL DEFAULT '',
+  before_json TEXT NOT NULL DEFAULT '',
+  after_json TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT ''
+);
 `;
 
 /** Additive migrations for databases created before a column existed. */
 const MIGRATIONS = [
   // SEASONAL | PREMIUM — from the official pack card (docs/assets/pack-card.jpeg)
-  `ALTER TABLE flowers ADD COLUMN class TEXT NOT NULL DEFAULT 'SEASONAL'`
+  `ALTER TABLE flowers ADD COLUMN class TEXT NOT NULL DEFAULT 'SEASONAL'`,
+  `ALTER TABLE group_messages ADD COLUMN external_message_id TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE group_messages ADD COLUMN reply_to_external_id TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE group_update_log ADD COLUMN resolved_at TEXT`,
+  `ALTER TABLE group_update_log ADD COLUMN escalation_reason TEXT NOT NULL DEFAULT ''`
 ];
 
 export function openDb(filePath: string): Database.Database {

@@ -177,3 +177,34 @@ card; if he prefers his combo style, the recipes need a second per-week shape.
 - Feedback/instruction vocabulary is small and fixed — deterministic parsing is feasible;
   the LLM is only a fallback.
 - Flower costs are volatile; procurement math needs current prices as input, not assumptions.
+
+## Owner dashboard and smart Q&A (2026-07)
+
+Business mode ships a **local owner console** at `http://localhost:8787` (same
+machine as the bot): Home / Deliveries / Money / Review / Ask the bot / Settings
+(with bot instructions and WhatsApp QR for linking or replacing the number).
+
+**WhatsApp group rules (Updates group only):**
+
+- Every message is read and staged for the nightly parser.
+- The bot **only replies when called**: `Bot, …`, `Flower Bot, …`, or `BMF, …`.
+- `Bot, send sheet` is the only default way to get the `.xlsx` in WhatsApp.
+- Nightly run writes the sheet for the dashboard; it does **not** auto-post the
+  file (or summary) to WhatsApp unless `GROUP_SHEET_SEND` / `GROUP_NIGHTLY_SUMMARY`
+  are enabled.
+- Personal chats are ignored. Owner sheet DMs stay off unless `OWNER_SHEET_DM=1`.
+
+**Answer quality (degradation chain, safest first):**
+
+1. **Cloud AI** (`LLM_PROVIDER=anthropic` or `openai` in `.env`) — question is
+   refined, then answered using **read-only database tools** (deliveries,
+   collections, customer lookup, renewals, review queue). The model cannot
+   change orders, subscriptions, or payments.
+2. **Local read-only tools** — same queries, no API key; handles “who owes the
+   most?”, “how much does X owe?”, “total deliveries today”.
+3. **Local Ollama** — snapshot-based answers when Ollama is running.
+4. **Deterministic fallback** — keyword patterns.
+
+**Safe testing:** `npm run sandbox` copies production into `sandbox/` and exposes
+the same commands plus a sandbox dashboard on port 8788. Production is never
+written during sandbox sessions.

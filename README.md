@@ -97,11 +97,57 @@ Defaults live in `config/settings.json`; `.env` overrides them and holds credent
 npm run dev              # ts-node, baileys mode (dev:twilio / dev:enhanced for others)
 npm run build            # compile to dist/
 npm test                 # Vitest suite (LLM mocked — no Ollama needed)
+npm run sandbox          # interactive business-mode test, isolated from production
+npm run test:sandbox     # automated sandbox safety smoke test
 npm run test:ollama      # live Ollama smoke test
 npm run add:sample       # seed sample Excel data
 ```
 
-More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+### Safe business sandbox
+
+`npm run sandbox` copies production into `sandbox/business-sandbox.db` (read-only
+source). Test updates, sheets, and Q&A without touching live data.
+
+| Command | What it does |
+|---------|----------------|
+| `update …` | Stage a group message (use `\n` for line breaks) |
+| `ask …` | Same as `Bot, …` in WhatsApp |
+| `process` | Run the conservative parser |
+| `sheet 2026-07-15` | Process + generate sheet |
+| `dashboard` | Open the owner dashboard on port 8788 |
+| `status` | Pending updates, review count |
+
+**Smarter answers** — add to `.env` (customer data is sent to the provider):
+
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+# or LLM_PROVIDER=openai + OPENAI_API_KEY=sk-...
+```
+
+Without an API key, the bot still uses **local read-only tools** (who owes the
+most, how much a customer owes, today's delivery totals) before falling back to
+Ollama.
+
+### Owner Console (Windows app for your uncle)
+
+Sheets live on the **owner console** by default — WhatsApp does not get the nightly
+`.xlsx` (staff can still say `Bot, send sheet`). Settings tab has instructions + QR.
+
+**You:** package a zip for delivery:
+
+```powershell
+npm run make:release
+```
+
+**Uncle:** unzip → `Setup.bat` → set `UPDATES_GROUP_JID` → Desktop **Bring My Flowers**.
+
+- Dashboard: **http://localhost:8787** (Settings tab or `/link` for QR)
+- Full handoff: [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)
+- Optional legacy WhatsApp posts: `GROUP_SHEET_SEND=1`, `OWNER_SHEET_DM=1`
+- Set `DASHBOARD_PORT=0` to disable the dashboard
+
+More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)
 
 ## Known limitations
 
