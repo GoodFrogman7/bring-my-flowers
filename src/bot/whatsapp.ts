@@ -224,13 +224,13 @@ export class WhatsAppBot implements MessageSender {
       const from = msg.key.remoteJid || '';
       const phoneNumber = from.split('@')[0];
 
-      logger.info({
-        from: phoneNumber,
-        message: messageText
-      }, 'Message received');
-
-      // Call the registered message handler
+      // No handler registered means 1:1 chats are intentionally hands-off —
+      // don't even log personal chat contents.
       if (this.messageHandler) {
+        logger.info({
+          from: phoneNumber,
+          message: messageText
+        }, 'Message received');
         await this.messageHandler(phoneNumber, messageText);
       }
     } catch (error) {

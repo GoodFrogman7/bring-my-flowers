@@ -119,8 +119,18 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       updatesGroupJid
     );
     bot = baileysBot;
-    const handler = buildHandler(baileysBot);
-    baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
+    // 1:1 chats are hands-off: the linked number is a real person's phone, so
+    // auto-replying to and forwarding personal chats to the owner was chaos
+    // (2026-07-14). The Updates group is the only input; the owner's only DM
+    // is the nightly sheet. Set HANDLE_DIRECT_CHATS=true only on a dedicated
+    // customer-care number to restore the customer/staff DM channel.
+    if (process.env.HANDLE_DIRECT_CHATS === 'true') {
+      const handler = buildHandler(baileysBot);
+      baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
+      logger.info('Direct-chat handling enabled (HANDLE_DIRECT_CHATS=true)');
+    } else {
+      logger.info('Direct chats ignored — the Updates group is the only input');
+    }
 
     if (updatesGroupJid) {
       // Questions answered live, "send sheet" served on demand, everything
