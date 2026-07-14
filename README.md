@@ -4,20 +4,22 @@ Automated WhatsApp chatbot for a flower delivery business. It classifies custome
 
 ## Deployment modes
 
-One entry point (`src/index.ts`) runs in one of three modes:
+One entry point (`src/index.ts`) runs in one of five modes:
 
 | Mode | WhatsApp transport | Storage | Orders | Extras |
 |------|--------------------|---------|--------|--------|
 | `baileys` (default) | WhatsApp Web, QR login | Excel | Confirmed directly | — |
 | `twilio` | Twilio API + webhook | Excel | Confirmed directly | — |
+| `cloud` | WhatsApp Business Cloud API + webhook | Excel | Confirmed directly | Template messages outside the 24-hour service window |
 | `enhanced` | Twilio API + webhook | Google Sheets | Razorpay payment link | Voice calls, Google Calendar, inventory alerts, EN/AR/HI/UR |
-| `business` | WhatsApp Web (or Twilio) | SQLite | Subscription operation | The real flower-subscription business: instruction intake, delivery sheets, payment runs — see [docs/BUSINESS.md](docs/BUSINESS.md) |
+| `business` | WhatsApp Web, Twilio, or Cloud API | SQLite | Subscription operation | The real flower-subscription business: instruction intake, delivery sheets, payment runs — see [docs/BUSINESS.md](docs/BUSINESS.md) |
 
 Select the mode with a CLI argument or the `BOT_MODE` environment variable:
 
 ```bash
 npm start                  # baileys (default)
 npm run start:twilio       # node dist/index.js twilio
+npm run start:cloud        # node dist/index.js cloud
 npm run start:enhanced     # node dist/index.js enhanced
 ```
 
@@ -39,7 +41,7 @@ npm run build
 npm start        # scan the QR code with WhatsApp > Linked Devices
 ```
 
-For Twilio and enhanced mode setup (Twilio sandbox, ngrok, Google Cloud, Razorpay), see **[docs/SETUP.md](docs/SETUP.md)**.
+For Twilio, Cloud API, and enhanced mode setup (webhooks, Google Cloud, Razorpay), see **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## What it handles
 

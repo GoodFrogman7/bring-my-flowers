@@ -1,6 +1,6 @@
 # Setup Guide
 
-Complete setup for all three modes. Start with the shared steps, then follow the section for your mode.
+Complete setup for all modes. Start with the shared steps, then follow the section for your mode.
 
 ## Shared prerequisites (all modes)
 
@@ -91,7 +91,39 @@ npm run start:twilio
 
 ---
 
-## Mode 3: enhanced (Sheets + Razorpay + voice + calendar)
+## Mode 3: cloud (WhatsApp Business Cloud API)
+
+1. In the [Meta App Dashboard](https://developers.facebook.com/apps/), create or open a Business app and add the **WhatsApp** product.
+2. In **WhatsApp → API Setup**, copy the phone number ID and create a long-lived system-user access token with WhatsApp messaging permissions.
+3. In **App Settings → Basic**, copy the app secret. Choose a random verification token yourself, then add all four values to `.env`:
+
+```env
+WHATSAPP_CLOUD_PHONE_NUMBER_ID=<phone-number-id>
+WHATSAPP_CLOUD_ACCESS_TOKEN=<long-lived-access-token>
+WHATSAPP_CLOUD_VERIFY_TOKEN=<random-value-you-chose>
+WHATSAPP_CLOUD_APP_SECRET=<meta-app-secret>
+WEBHOOK_PORT=3000
+```
+
+4. Expose the application:
+
+```bash
+ngrok http 3000
+```
+
+5. In **WhatsApp → Configuration → Webhook**, set the callback URL to `https://<your-ngrok>.ngrok-free.app/webhook/whatsapp/cloud`, enter `WHATSAPP_CLOUD_VERIFY_TOKEN`, and subscribe to the `messages` field.
+6. Build and run:
+
+```bash
+npm run build
+npm run start:cloud
+```
+
+Incoming webhooks are verified with Meta's `X-Hub-Signature-256` header. The Cloud API permits free-form replies only in the 24-hour customer-service window; use the transport's `sendTemplate` method for a pre-approved template outside it.
+
+---
+
+## Mode 4: enhanced (Sheets + Razorpay + voice + calendar)
 
 Do the Twilio setup above first, then:
 

@@ -15,7 +15,7 @@ export interface GroupUpdatesOptions {
   delSheetDir?: string;
   /** HH:mm IST — after the day's group chatter, before staff pull tomorrow's sheet. */
   processTime?: string;
-  /** Numbers that get their own DM copy of the nightly sheet (the owner). */
+  /** Numbers that get only the nightly sheet file by DM (the owner). */
   ownerDm?: string[];
   today?: () => string;
 }
@@ -81,13 +81,12 @@ export class GroupUpdatesScheduler {
       await sender.sendMessage(groupJid, `${caption}\n→ ${outPath}`);
     }
 
-    // The owner gets his own copy of summary + sheet, so he never has to dig
-    // through the group's chatter for it.
+    // The owner receives only the sheet file. Summaries and all conversational
+    // responses remain in the Updates group.
     for (const owner of ownerDm ?? []) {
-      await sender.sendMessage(owner, summary);
       if (sender.sendDocument) {
         const sent = await sender.sendDocument(owner, outPath, caption);
-        if (!sent) await sender.sendMessage(owner, `${caption}\n(⚠️ file send failed — it is saved at ${outPath})`);
+        if (!sent) logger.error({ owner, outPath }, 'Failed to DM nightly sheet to owner');
       }
     }
     logger.info({ ...result, escalated: result.escalated.length, sheetRows: sheet.rows, ownerDm: ownerDm?.length ?? 0 }, 'Group updates run complete');

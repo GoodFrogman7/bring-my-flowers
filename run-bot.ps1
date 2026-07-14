@@ -4,6 +4,7 @@
 # to logs\launcher.log. To stop it: Stop-ScheduledTask BringMyFlowersBot.
 $ErrorActionPreference = 'Continue'
 Set-Location C:\bring_my_flowers
+New-Item -ItemType Directory -Force -Path 'logs', 'backups\whatsapp-session' | Out-Null
 
 function Log-Launcher($msg) {
   $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
@@ -34,6 +35,19 @@ try {
 }
 
 while ($true) {
+  # Preserve the linked-device credentials before every launch. Keep the seven
+  # newest snapshots so a corrupt or accidentally deleted session can be
+  # restored without asking the account owner to scan another QR.
+  if (Test-Path 'sessions\creds.json') {
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $snapshot = "backups\whatsapp-session\$stamp"
+    Copy-Item 'sessions' $snapshot -Recurse -Force
+    Get-ChildItem 'backups\whatsapp-session' -Directory |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -Skip 7 |
+      Remove-Item -Recurse -Force
+    Log-Launcher "WhatsApp session backed up to $snapshot"
+  }
   Log-Launcher "===== Starting flower bot ====="
   npm run dev:business
   Log-Launcher "Bot exited - restarting in 15s"

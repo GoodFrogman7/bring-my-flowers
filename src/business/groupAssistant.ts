@@ -18,14 +18,13 @@ import logger from '../utils/logger';
 /**
  * Live layer over the "Updates" group, on top of the nightly ingestion:
  *
- *   question       → answered immediately from the datastore (LLM phrases it,
- *                    deterministic fallback when Ollama is down)
- *   sheet request  → pending updates applied right away, delivery sheet
- *                    generated and sent into the group as an .xlsx document
- *   anything else  → staged for the nightly run, exactly as before
+ *   "Bot, <question>"  → answered immediately from the datastore
+ *   "Bot, send sheet"  → pending updates applied, sheet sent to the group
+ *   operational update → staged for the nightly run
+ *   ordinary message   → staged silently, so the bot keeps up without replying
  *
  * Routing is deterministic and biased toward staging: a message is only
- * intercepted when it unambiguously looks like a question or a sheet ask.
+ * intercepted when staff explicitly invokes the bot.
  * Staff shorthand ("Hold Neeraj?", anything with a phone number) always wins,
  * because a missed update is worse than an unanswered question — staged
  * messages still get the nightly escalation safety net.
@@ -38,7 +37,7 @@ export type GroupRoute =
 
 const SHEET_ASK = /\b(?:send|share|give|show|get|need|want|make|bana|bhej\w*|chahiye)\b[\s\S]{0,40}?\b(?:del(?:ivery)?\s*)?sheet\b|\bsheet\b\s*(?:please|pls|plz|now|today|tomorrow|aaj|kal)\b|^\s*(?:del(?:ivery)?\s*)?sheet\b[\s\S]{0,30}$/i;
 
-const QUESTION_START = /^(?:what|who|whose|when|where|which|how|is|are|was|were|do|does|did|has|have|can|could|will|any|status|kya|kitn\w*|kab|kaun|kidhar|kahan)\b/i;
+const BOT_CALL = /^(?:@?bot|flower\s*bot|bmf(?:\s*bot)?)\b[\s,:-]*/i;
 
 function sheetDate(text: string, today: string): string {
   const explicit = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
@@ -48,17 +47,22 @@ function sheetDate(text: string, today: string): string {
   return addDays(today, 1);
 }
 
-/** Deterministic router; anything not clearly a question/sheet ask stays an update. */
+/**
+ * Deterministic router. Only an explicit Bot/Flower Bot/BMF prefix can trigger
+ * a response. Clear operational instructions remain updates without a prefix.
+ */
 export function routeGroupMessage(text: string, today: string): GroupRoute {
-  const trimmed = text.trim();
+  const original = text.trim();
+  const invoked = BOT_CALL.test(original);
+  const trimmed = invoked ? original.replace(BOT_CALL, '').trim() : original;
   // Staff shorthand always outranks Q&A: a phone number means a new order,
   // a leading hold/skip/resume/restrict verb means a schedule instruction —
   // even when phrased with a question mark ("Hold Neeraj?").
   if (extractPhone(trimmed)) return { kind: 'UPDATE' };
   if (matchVerbFirst(trimmed)) return { kind: 'UPDATE' };
 
-  if (SHEET_ASK.test(trimmed)) return { kind: 'SHEET_REQUEST', date: sheetDate(trimmed, today) };
-  if (trimmed.includes('?') || QUESTION_START.test(trimmed)) return { kind: 'QUESTION' };
+  if (invoked && SHEET_ASK.test(trimmed)) return { kind: 'SHEET_REQUEST', date: sheetDate(trimmed, today) };
+  if (invoked) return { kind: 'QUESTION' };
   return { kind: 'UPDATE' };
 }
 
@@ -247,7 +251,9 @@ export class GroupAssistant {
     const route = routeGroupMessage(text, today);
 
     if (route.kind === 'UPDATE') {
-      insertGroupMessage(db, participant, text, new Date().toISOString());
+      // If staff prefixed an operational instruction with "Bot", persist the
+      // instruction itself so the nightly classifier still recognizes it.
+      insertGroupMessage(db, participant, text.trim().replace(BOT_CALL, '').trim(), new Date().toISOString());
       return;
     }
 

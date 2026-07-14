@@ -140,7 +140,8 @@ The live-operation layer (`npm run start:business`, or `npm run dev:business`):
 
 Transport: Baileys by default — scan the QR with the **customer-care phone**
 and the bot answers on the number customers already use. `BUSINESS_TRANSPORT=twilio`
-switches to the webhook path. `BUSINESS_DB` overrides the datastore path.
+or `BUSINESS_TRANSPORT=cloud` switches to the corresponding webhook path.
+`BUSINESS_DB` overrides the datastore path.
 
 ## Phase C implementation (done)
 

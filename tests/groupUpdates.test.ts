@@ -107,7 +107,7 @@ describe('processGroupMessages', () => {
 });
 
 describe('GroupUpdatesScheduler.runOnce', () => {
-  it('applies staged updates, posts summary + sheet to the group, and DMs the owner a copy', async () => {
+  it('posts summary + sheet to the group but DMs only the sheet to the owner', async () => {
     const sent: Array<{ to: string; message: string }> = [];
     const docs: Array<{ to: string; filePath: string }> = [];
     const sender: MessageSender = {
@@ -132,8 +132,8 @@ describe('GroupUpdatesScheduler.runOnce', () => {
     expect(sent.filter(m => m.to === 'g@g.us')).toHaveLength(1);
     expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
 
-    // The owner gets his own DM copy of both
-    expect(sent.filter(m => m.to === '+919717173327')).toHaveLength(1);
+    // The owner gets only the sheet; no summary or fallback text is sent by DM
+    expect(sent.filter(m => m.to === '+919717173327')).toHaveLength(0);
     expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(1);
     expect(docs[0].filePath).toContain(`del-sheet-${TOMORROW}.xlsx`);
   });

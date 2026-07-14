@@ -1,5 +1,6 @@
 import express from 'express';
 import bodyParser from 'body-parser';
+import crypto from 'crypto';
 import logger from './utils/logger';
 import { DataStore } from './data/dataStore';
 import { MessageSender } from './bot/messageSender';
@@ -32,14 +33,18 @@ export interface ServerComponents {
   messageHandler: IncomingMessageHandler;
   /** When set, Twilio webhook requests must carry a valid signature. */
   twilioAuthToken?: string;
+  /** Cloud API webhook verification and payload-signing credentials. */
+  cloudApi?: {
+    verifyToken: string;
+    appSecret: string;
+  };
   voice?: VoiceComponents;
   payment?: PaymentComponents;
 }
 
 /**
- * Webhook server for the Twilio-based modes. The WhatsApp route is always
- * registered; voice and payment routes appear only when their components are
- * supplied (enhanced mode).
+ * Webhook server for API-based WhatsApp modes. Voice and payment routes appear
+ * only when their components are supplied (enhanced mode).
  */
 export function createServer(components: ServerComponents, port: number = 3000) {
   const app = express();
@@ -56,7 +61,7 @@ export function createServer(components: ServerComponents, port: number = 3000) 
     }
   }));
 
-  const { messageHandler, twilioAuthToken, voice, payment } = components;
+  const { messageHandler, twilioAuthToken, cloudApi, voice, payment } = components;
 
   const validateTwilio = twilioAuthToken
     ? twilioSignatureValidator(twilioAuthToken)
@@ -85,6 +90,64 @@ export function createServer(components: ServerComponents, port: number = 3000) 
       res.status(500).send('Error');
     }
   });
+
+  if (cloudApi) {
+    const validateCloudSignature: express.RequestHandler = (req, res, next) => {
+      const signature = req.header('x-hub-signature-256');
+      const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody;
+      if (!signature?.startsWith('sha256=') || !rawBody) {
+        logger.warn('Cloud API webhook missing signature or raw body');
+        return res.status(403).send('Invalid signature');
+      }
+
+      const expected = `sha256=${crypto.createHmac('sha256', cloudApi.appSecret).update(rawBody).digest('hex')}`;
+      const signatureBuffer = Buffer.from(signature);
+      const expectedBuffer = Buffer.from(expected);
+      if (
+        signatureBuffer.length !== expectedBuffer.length ||
+        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+      ) {
+        logger.warn('Cloud API webhook signature validation failed');
+        return res.status(403).send('Invalid signature');
+      }
+      next();
+    };
+
+    // Meta calls this once while registering the callback URL.
+    app.get('/webhook/whatsapp/cloud', (req, res) => {
+      const mode = req.query['hub.mode'];
+      const token = req.query['hub.verify_token'];
+      const challenge = req.query['hub.challenge'];
+      if (mode === 'subscribe' && typeof token === 'string' && token === cloudApi.verifyToken && typeof challenge === 'string') {
+        return res.status(200).send(challenge);
+      }
+      logger.warn({ mode }, 'Cloud API webhook verification rejected');
+      return res.sendStatus(403);
+    });
+
+    app.post('/webhook/whatsapp/cloud', validateCloudSignature, async (req, res) => {
+      try {
+        const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+        for (const entry of entries) {
+          const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+          for (const change of changes) {
+            const messages = Array.isArray(change?.value?.messages) ? change.value.messages : [];
+            for (const message of messages) {
+              if (message?.type !== 'text' || typeof message.from !== 'string' || typeof message.text?.body !== 'string') {
+                continue;
+              }
+              logger.info({ from: message.from }, 'Received WhatsApp message via Cloud API webhook');
+              await messageHandler.handleMessage(message.from, message.text.body);
+            }
+          }
+        }
+        return res.status(200).send('OK');
+      } catch (error) {
+        logger.error({ error }, 'Error processing WhatsApp Cloud API webhook');
+        return res.status(500).send('Error');
+      }
+    });
+  }
 
   if (voice) {
     // Voice call webhook
@@ -260,6 +323,7 @@ export function createServer(components: ServerComponents, port: number = 3000) 
     logger.info({ port: actualPort }, 'Webhook server started');
     console.log(`\n🌐 Webhook server running on http://localhost:${actualPort}`);
     console.log(`📱 WhatsApp webhook: http://localhost:${actualPort}/webhook/whatsapp`);
+    if (cloudApi) console.log(`📱 Cloud API webhook: http://localhost:${actualPort}/webhook/whatsapp/cloud`);
     if (voice) console.log(`🎤 Voice webhook: http://localhost:${actualPort}/webhook/voice`);
     if (payment) console.log(`💳 Payment webhook: http://localhost:${actualPort}/webhook/payment`);
     console.log('');

@@ -8,4 +8,14 @@ export interface MessageSender {
   isConnected(): boolean;
   /** Send a file (delivery sheet etc.). Optional — Twilio transport lacks it. */
   sendDocument?(to: string, filePath: string, caption?: string): Promise<boolean>;
+  /**
+   * Send a pre-approved WhatsApp template. Cloud API requires templates for
+   * business-initiated messages outside the 24-hour customer-service window.
+   */
+  sendTemplate?(
+    to: string,
+    templateName: string,
+    languageCode?: string,
+    components?: unknown[]
+  ): Promise<boolean>;
 }

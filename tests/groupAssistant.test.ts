@@ -39,22 +39,27 @@ describe('routeGroupMessage', () => {
     expect(routeGroupMessage('Pink lilies', TODAY)).toEqual({ kind: 'UPDATE' });
   });
 
-  it('routes questions to QUESTION', () => {
-    expect(routeGroupMessage('How many deliveries going out today?', TODAY)).toEqual({ kind: 'QUESTION' });
-    expect(routeGroupMessage('kitne orders hai kal', TODAY)).toEqual({ kind: 'QUESTION' });
-    expect(routeGroupMessage('what does the stock look like', TODAY)).toEqual({ kind: 'QUESTION' });
-    expect(routeGroupMessage('any pending payments in Zone A?', TODAY)).toEqual({ kind: 'QUESTION' });
+  it('routes explicitly invoked questions to QUESTION', () => {
+    expect(routeGroupMessage('Bot, how many deliveries going out today?', TODAY)).toEqual({ kind: 'QUESTION' });
+    expect(routeGroupMessage('Flower Bot: kitne orders hai kal', TODAY)).toEqual({ kind: 'QUESTION' });
+    expect(routeGroupMessage('BMF what does the stock look like', TODAY)).toEqual({ kind: 'QUESTION' });
+    expect(routeGroupMessage('@bot any pending payments in Zone A?', TODAY)).toEqual({ kind: 'QUESTION' });
+  });
+
+  it('stages ordinary group questions when the bot was not invoked', () => {
+    expect(routeGroupMessage('How many deliveries going out today?', TODAY)).toEqual({ kind: 'UPDATE' });
+    expect(routeGroupMessage('any pending payments in Zone A?', TODAY)).toEqual({ kind: 'UPDATE' });
   });
 
   it('routes sheet asks to SHEET_REQUEST, defaulting to tomorrow', () => {
-    expect(routeGroupMessage('send sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
-    expect(routeGroupMessage('pls share the delivery sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
-    expect(routeGroupMessage('sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
+    expect(routeGroupMessage('Bot send sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
+    expect(routeGroupMessage('Flower Bot, pls share the delivery sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
+    expect(routeGroupMessage('BMF: sheet', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TOMORROW });
   });
 
   it('honours an explicit date or "today" in a sheet ask', () => {
-    expect(routeGroupMessage('need sheet for today', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TODAY });
-    expect(routeGroupMessage('send sheet 2026-07-10', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: '2026-07-10' });
+    expect(routeGroupMessage('Bot need sheet for today', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: TODAY });
+    expect(routeGroupMessage('Bot send sheet 2026-07-10', TODAY)).toEqual({ kind: 'SHEET_REQUEST', date: '2026-07-10' });
   });
 
   it('does not treat a sheet mention inside an update as a sheet request', () => {
@@ -113,11 +118,15 @@ describe('GroupAssistant.handle', () => {
     expect((db.prepare(`SELECT COUNT(*) n FROM group_messages`).get() as { n: number }).n).toBe(1);
 
     await assistant.handle('919999999999', 'how many deliveries today?');
+    expect(sent).toHaveLength(0);
+    expect((db.prepare(`SELECT COUNT(*) n FROM group_messages`).get() as { n: number }).n).toBe(2);
+
+    await assistant.handle('919999999999', 'Bot, how many deliveries today?');
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toBe('g@g.us');
     expect(sent[0].message).toContain('1 deliveries due');
     // Questions are answered, not staged
-    expect((db.prepare(`SELECT COUNT(*) n FROM group_messages`).get() as { n: number }).n).toBe(1);
+    expect((db.prepare(`SELECT COUNT(*) n FROM group_messages`).get() as { n: number }).n).toBe(2);
   });
 
   it('processes staged updates then sends the sheet as a document', async () => {
@@ -129,7 +138,7 @@ describe('GroupAssistant.handle', () => {
     });
 
     await assistant.handle('919999999999', 'Hold Neeraj Rathore is payment not received');
-    await assistant.handle('919999999999', 'send sheet for today');
+    await assistant.handle('919999999999', 'Bot, send sheet for today');
 
     // The staged hold was applied before the sheet was generated
     const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;

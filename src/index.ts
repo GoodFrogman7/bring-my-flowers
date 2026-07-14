@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { WhatsAppBot } from './bot/whatsapp';
 import { TwilioWhatsAppBot } from './bot/twilioWhatsApp';
+import { CloudApiWhatsAppBot } from './bot/cloudApiWhatsApp';
 import { MessageSender } from './bot/messageSender';
 import { OllamaClient } from './llm/ollama';
 import { ExcelManager } from './data/excelManager';
@@ -31,6 +32,8 @@ import logger from './utils/logger';
  *               directly with no payment step. No webhook server.
  *   twilio    — Twilio WhatsApp API + webhook server, Excel storage, direct
  *               order confirmation.
+ *   cloud     — WhatsApp Business Cloud API + webhook server, Excel storage,
+ *               direct order confirmation.
  *   enhanced  — Twilio + Google Sheets + Razorpay payment links + voice-call
  *               ordering + Google Calendar + inventory monitoring.
  *
@@ -40,9 +43,9 @@ import logger from './utils/logger';
  * Mode is chosen by CLI argument (`node dist/index.js enhanced`) or the
  * BOT_MODE environment variable; default is baileys.
  */
-export type BotMode = 'baileys' | 'twilio' | 'enhanced' | 'business';
+export type BotMode = 'baileys' | 'twilio' | 'cloud' | 'enhanced' | 'business';
 
-const MODES: BotMode[] = ['baileys', 'twilio', 'enhanced', 'business'];
+const MODES: BotMode[] = ['baileys', 'twilio', 'cloud', 'enhanced', 'business'];
 
 function resolveMode(): BotMode {
   const raw = (process.argv[2]?.replace(/^--mode=/, '') || process.env.BOT_MODE || 'baileys').toLowerCase();
@@ -50,6 +53,7 @@ function resolveMode(): BotMode {
     console.error(`❌ Unknown mode "${raw}". Use one of: ${MODES.join(', ')}\n`);
     console.error('  baileys   — WhatsApp Web (QR code), Excel storage, no payment step');
     console.error('  twilio    — Twilio WhatsApp API, Excel storage, no payment step');
+    console.error('  cloud     — WhatsApp Business Cloud API, Excel storage, no payment step');
     console.error('  enhanced  — Twilio + Google Sheets + Razorpay + voice + calendar');
     console.error('  business  — the real subscription operation (SQLite datastore,');
     console.error('              instruction intake, payment runs; docs/BUSINESS.md)\n');
@@ -75,7 +79,8 @@ function requireEnv(mode: BotMode, names: string[]): string[] {
 
 /**
  * The business mode runs the real subscription operation: the customer-care
- * WhatsApp number (Baileys QR by default, Twilio via BUSINESS_TRANSPORT=twilio)
+ * WhatsApp number (Baileys QR by default; Twilio or Cloud API via
+ * BUSINESS_TRANSPORT=twilio or BUSINESS_TRANSPORT=cloud)
  * wired to the SQLite datastore — instruction intake for customers, ops
  * commands for staff. The generic bot's Excel/Sheets stack stays untouched.
  */
@@ -104,7 +109,21 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     staff: config.whatsapp.owners
   });
 
-  if (transport === 'twilio') {
+  if (transport === 'cloud') {
+    const [phoneNumberId, accessToken, verifyToken, appSecret] = requireEnv('business', [
+      'WHATSAPP_CLOUD_PHONE_NUMBER_ID',
+      'WHATSAPP_CLOUD_ACCESS_TOKEN',
+      'WHATSAPP_CLOUD_VERIFY_TOKEN',
+      'WHATSAPP_CLOUD_APP_SECRET'
+    ]);
+    const cloudBot = new CloudApiWhatsAppBot(phoneNumberId, accessToken, process.env.WHATSAPP_CLOUD_API_VERSION);
+    await cloudBot.start();
+    bot = cloudBot;
+    server = createServer({
+      messageHandler: buildHandler(cloudBot),
+      cloudApi: { verifyToken, appSecret }
+    }, parseInt(process.env.WEBHOOK_PORT || '3000'));
+  } else if (transport === 'twilio') {
     const [sid, token, from] = requireEnv('business', ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_WHATSAPP_NUMBER']);
     const twilioBot = new TwilioWhatsAppBot(sid, token, from);
     await twilioBot.start();
@@ -119,18 +138,10 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       updatesGroupJid
     );
     bot = baileysBot;
-    // 1:1 chats are hands-off: the linked number is a real person's phone, so
-    // auto-replying to and forwarding personal chats to the owner was chaos
-    // (2026-07-14). The Updates group is the only input; the owner's only DM
-    // is the nightly sheet. Set HANDLE_DIRECT_CHATS=true only on a dedicated
-    // customer-care number to restore the customer/staff DM channel.
-    if (process.env.HANDLE_DIRECT_CHATS === 'true') {
-      const handler = buildHandler(baileysBot);
-      baileysBot.onMessage((from, message) => handler.handleMessage(from, message));
-      logger.info('Direct-chat handling enabled (HANDLE_DIRECT_CHATS=true)');
-    } else {
-      logger.info('Direct chats ignored — the Updates group is the only input');
-    }
+    // This linked account is also used for personal chats. Business mode must
+    // never inspect, reply to, or forward a 1:1 message. The Updates group is
+    // the only inbound channel; changing this requires a code change.
+    logger.info('Direct chats ignored — the Updates group is the only input');
 
     if (updatesGroupJid) {
       // Questions answered live, "send sheet" served on demand, everything
@@ -177,7 +188,7 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
   console.log('🌸 Mode: business (the real subscription operation)');
   console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
   console.log(`📱 Transport: ${transport}`);
-  console.log(`👑 Staff numbers: ${config.whatsapp.owners.length > 0 ? config.whatsapp.owners.join(', ') + ' — text "help"' : '⚠️ none set (OWNER_NUMBERS)'}`);
+  console.log(`📄 Nightly sheet DM: ${config.whatsapp.owners.length > 0 ? config.whatsapp.owners.join(', ') : '⚠️ none set (OWNER_NUMBERS)'}`);
   console.log('=====================================================\n');
 
   const shutdown = async () => {
@@ -232,6 +243,7 @@ async function main() {
     let razorpayClient: RazorpayClient | null = null;
     let baileysBot: WhatsAppBot | null = null;
     let twilioAuthToken: string | undefined;
+    let cloudApi: { verifyToken: string; appSecret: string } | undefined;
     let voiceComponents: VoiceComponents | undefined;
     let paymentComponents: PaymentComponents | undefined;
     let inventoryMonitor: InventoryMonitor | null = null;
@@ -255,6 +267,19 @@ async function main() {
         config.whatsapp.maxReconnectAttempts
       );
       whatsappBot = baileysBot;
+    } else if (mode === 'cloud') {
+      const [phoneNumberId, accessToken, verifyToken, appSecret] = requireEnv(mode, [
+        'WHATSAPP_CLOUD_PHONE_NUMBER_ID',
+        'WHATSAPP_CLOUD_ACCESS_TOKEN',
+        'WHATSAPP_CLOUD_VERIFY_TOKEN',
+        'WHATSAPP_CLOUD_APP_SECRET'
+      ]);
+      const bot = new CloudApiWhatsAppBot(phoneNumberId, accessToken, process.env.WHATSAPP_CLOUD_API_VERSION);
+      await bot.start();
+      whatsappBot = bot;
+      logger.info('✓ WhatsApp Cloud API bot initialized');
+      dataStore = buildExcelStore();
+      cloudApi = { verifyToken, appSecret };
     } else {
       const [twilioAccountSid, authToken, twilioWhatsAppNumber] = requireEnv(mode, [
         'TWILIO_ACCOUNT_SID',
@@ -383,11 +408,12 @@ async function main() {
         process.exit(1);
       }
       logger.info('✓ WhatsApp bot connected successfully');
-    } else {
+    } else if (!server) {
       const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3000');
       server = createServer({
         messageHandler,
         twilioAuthToken,
+        cloudApi,
         voice: voiceComponents,
         payment: paymentComponents
       }, webhookPort);
