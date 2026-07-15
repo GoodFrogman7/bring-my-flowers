@@ -69,6 +69,7 @@ export function startDashboard(options: DashboardOptions): http.Server {
       ok: connected && linked && groupConfigured,
       whatsappConnected: connected,
       linked,
+      phoneNumber: wa?.phoneNumber ?? null,
       updatesGroupConfigured: groupConfigured,
       updatesGroupJid: options.updatesGroupJid || wa?.updatesGroupJid || null,
       lastError: wa?.lastError ?? null,

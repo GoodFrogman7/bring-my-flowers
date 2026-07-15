@@ -527,7 +527,10 @@ function applyHealth(health) {
   const aiPill = el('pill-ai');
   if (health) {
     if (health.whatsappConnected && health.linked && health.updatesGroupConfigured) {
-      waPill.className = 'pill ok'; waPill.innerHTML = '<span class="dot"></span> WhatsApp online';
+      waPill.className = 'pill ok';
+      waPill.innerHTML = health.phoneNumber
+        ? '<span class="dot"></span> ' + String(health.phoneNumber).replace(/</g, '&lt;')
+        : '<span class="dot"></span> WhatsApp online';
     } else {
       waPill.className = 'pill warn'; waPill.innerHTML = '<span class="dot"></span> WhatsApp offline';
     }
@@ -564,8 +567,11 @@ async function refreshQr() {
     const health = await getJson('/api/health');
     applyHealth(health);
     if (health.whatsappConnected && health.linked) {
-      status.textContent = 'Connected';
-      frame.innerHTML = '<p class="empty" style="padding:16px;font-size:13px">Linked.<br>Log out on phone to swap numbers.</p>';
+      const phone = health.phoneNumber ? String(health.phoneNumber) : '';
+      status.textContent = phone ? ('Connected · ' + phone) : 'Connected';
+      frame.innerHTML = phone
+        ? '<p class="empty" style="padding:16px;font-size:13px">Linked as <strong>' + phone.replace(/</g, '&lt;') + '</strong>.<br>Log out on phone to swap numbers.</p>'
+        : '<p class="empty" style="padding:16px;font-size:13px">Linked.<br>Log out on phone to swap numbers.</p>';
       return;
     }
     status.textContent = health.linked ? 'Reconnecting…' : 'Scan with WhatsApp → Linked Devices';
@@ -768,8 +774,11 @@ async function refresh() {
     const health = await fetch('/api/health').then(r => r.json());
     const status = document.getElementById('status');
     if (health.whatsappConnected && health.linked) {
-      status.textContent = 'Connected';
-      document.getElementById('qr').innerHTML = '<p>WhatsApp is linked.</p>';
+      const phone = health.phoneNumber ? String(health.phoneNumber) : '';
+      status.textContent = phone ? ('Connected · ' + phone) : 'Connected';
+      document.getElementById('qr').innerHTML = phone
+        ? '<p>Linked as <strong>' + phone.replace(/</g, '&lt;') + '</strong></p>'
+        : '<p>WhatsApp is linked.</p>';
       return;
     }
     status.textContent = health.linked ? 'Reconnecting…' : 'Scan the QR';

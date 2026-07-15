@@ -23,11 +23,21 @@ export interface IncomingGroupMessageMetadata {
 export interface WhatsAppHealth {
   connected: boolean;
   linked: boolean;
+  /** E.164-ish display number for the linked business phone, if known. */
+  phoneNumber: string | null;
   lastError: string | null;
   lastDisconnectStatus: number | null;
   reconnectAttempts: number;
   latestQr: string | null;
   updatesGroupJid: string | null;
+}
+
+/** Baileys JID / id → display phone (e.g. 9197…:12@s.whatsapp.net → +9197…). */
+export function formatLinkedPhone(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const digits = raw.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') ?? '';
+  if (digits.length < 8) return null;
+  return `+${digits}`;
 }
 
 /**
@@ -76,12 +86,26 @@ export class WhatsAppBot implements MessageSender {
     return {
       connected: this.connected,
       linked: fs.existsSync(path.join(this.sessionPath, 'creds.json')),
+      phoneNumber: this.resolveLinkedPhone(),
       lastError: this.lastError,
       lastDisconnectStatus: this.lastDisconnectStatus,
       reconnectAttempts: this.reconnectAttempts,
       latestQr: this.latestQr,
       updatesGroupJid: this.updatesGroupJid ?? null
     };
+  }
+
+  private resolveLinkedPhone(): string | null {
+    const fromSocket = formatLinkedPhone(this.sock?.user?.id);
+    if (fromSocket) return fromSocket;
+    try {
+      const credsPath = path.join(this.sessionPath, 'creds.json');
+      if (!fs.existsSync(credsPath)) return null;
+      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as { me?: { id?: string } };
+      return formatLinkedPhone(creds.me?.id);
+    } catch {
+      return null;
+    }
   }
 
   /** Tear down the previous socket before a reconnect so listeners do not stack. */

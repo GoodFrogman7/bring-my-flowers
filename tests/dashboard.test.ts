@@ -97,6 +97,8 @@ describe('owner dashboard', () => {
     expect(health.status).toBe(200);
     expect(health.json).toHaveProperty('whatsappConnected');
     expect(health.json).toHaveProperty('linked');
+    expect(health.json).toHaveProperty('phoneNumber');
     expect(String(await request('GET', '/').then(r => r.json))).toContain('status-banner');
   });
 });
+
