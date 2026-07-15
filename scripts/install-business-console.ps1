@@ -84,6 +84,7 @@ function Ensure-EnvLine([string]$Key, [string]$Value) {
 Ensure-EnvLine 'BOT_MODE' 'business'
 Ensure-EnvLine 'DASHBOARD_PORT' '8787'
 Ensure-EnvLine 'OWNER_SHEET_DM' '0'
+Ensure-EnvLine 'GROUP_SHEET_SEND' '1'
 
 Write-Step "Installing dependencies and building"
 npm install

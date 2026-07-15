@@ -131,8 +131,7 @@ Ollama.
 
 ### Owner Console (Windows app for your uncle)
 
-Sheets live on the **owner console** by default — WhatsApp does not get the nightly
-`.xlsx` (staff can still say `Bot, send sheet`). Settings tab has instructions + QR.
+Sheets live on the **owner console** by default — personal DMs are **off**. The nightly `.xlsx` still posts to the **Updates group** for staff.
 
 **You:** package a zip for delivery:
 
@@ -144,7 +143,8 @@ npm run make:release
 
 - Dashboard: **http://localhost:8787** (Settings tab or `/link` for QR)
 - Full handoff: [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)
-- Optional legacy WhatsApp posts: `GROUP_SHEET_SEND=1`, `OWNER_SHEET_DM=1`
+- `OWNER_SHEET_DM=1` only if you intentionally want nightly WhatsApp DMs to owner numbers
+- `GROUP_SHEET_SEND=0` stops nightly group sheet upload
 - Set `DASHBOARD_PORT=0` to disable the dashboard
 
 More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)

@@ -22,6 +22,39 @@ function Show-Error([string]$Message) {
   [System.Windows.Forms.MessageBox]::Show($Message, 'Bring My Flowers', 'OK', 'Warning') | Out-Null
 }
 
+function Show-StartingDialog([scriptblock]$WaitLoop) {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = 'Bring My Flowers'
+  $form.Size = New-Object System.Drawing.Size(420, 130)
+  $form.StartPosition = 'CenterScreen'
+  $form.FormBorderStyle = 'FixedDialog'
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.TopMost = $true
+  $label = New-Object System.Windows.Forms.Label
+  $label.AutoSize = $false
+  $label.Size = New-Object System.Drawing.Size(380, 50)
+  $label.Location = New-Object System.Drawing.Point(20, 24)
+  $label.Text = 'Starting the bot…'
+  $form.Controls.Add($label)
+  $timer = New-Object System.Windows.Forms.Timer
+  $timer.Interval = 1000
+  $script:waitSec = 0
+  $timer.Add_Tick({
+    $script:waitSec++
+    $label.Text = "Starting the bot… ($script:waitSec s)`nPlease wait — first launch can take up to a minute."
+    if (& $WaitLoop) {
+      $timer.Stop()
+      $form.Close()
+    }
+  })
+  $form.Add_Shown({ $timer.Start() })
+  [void]$form.ShowDialog()
+  return $script:waitResult
+}
+
 function Find-BrowserApp {
   $candidates = @(
     "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
@@ -59,13 +92,18 @@ if ($task) {
 }
 
 $ready = $false
-for ($i = 0; $i -lt $MaxWaitSec; $i++) {
+$script:waitResult = $false
+$ready = Show-StartingDialog {
+  if ($script:waitSec -ge $MaxWaitSec) {
+    $script:waitResult = $false
+    return $true
+  }
   try {
     Invoke-RestMethod -Uri $OverviewUrl -TimeoutSec 2 | Out-Null
-    $ready = $true
-    break
+    $script:waitResult = $true
+    return $true
   } catch {
-    Start-Sleep -Seconds 1
+    return $false
   }
 }
 

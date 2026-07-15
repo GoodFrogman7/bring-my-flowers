@@ -189,6 +189,9 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       });
       groupScheduler.start();
       logger.info({ updatesGroupJid }, '✓ "Updates" group ingestion active');
+    } else {
+      logger.error('UPDATES_GROUP_JID is not set — the bot will not watch the staff Updates group');
+      console.error('\n⚠️  Set UPDATES_GROUP_JID in .env (the ...@g.us JID). The dashboard will show a red banner until this is fixed.\n');
     }
 
     logger.info('Starting WhatsApp (scan the QR with the customer-care phone)...');
@@ -235,12 +238,14 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     });
   }
 
+  const sheetDmOn = (process.env.OWNER_SHEET_DM || '0').trim() === '1' ||
+    (process.env.OWNER_SHEET_DM || '').trim().toLowerCase() === 'true';
   logger.info('🎉 Business mode operational');
   console.log('\n=====================================================');
   console.log('🌸 Mode: business (the real subscription operation)');
   console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
   console.log(`📱 Transport: ${transport}`);
-  console.log('📄 Nightly sheet: written for dashboard only (WhatsApp quiet unless Bot, send sheet)');
+  console.log(`📄 Nightly sheet: Updates group + dashboard${sheetDmOn ? ` + owner DM (${config.whatsapp.owners.join(', ') || 'none'})` : ' (personal DMs OFF)'}`);
   console.log('📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
   console.log(`🧠 Owner Q&A: ${cloudProvider ? `cloud (${cloudProvider.name}) with read-only tools` : 'local Ollama + deterministic fallback'}`);
   console.log(`🖥️ Dashboard: ${dashboardServer ? `http://localhost:${dashboardPort}` : 'disabled (DASHBOARD_PORT=0)'}`);

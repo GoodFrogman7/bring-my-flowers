@@ -9,6 +9,7 @@ import { renewalsDue } from '../business/paymentRun';
 import { addDays, todayIST } from '../business/dates';
 import { WhatsAppHealth } from '../bot/whatsapp';
 import { DASHBOARD_HTML, LINK_HTML } from './page';
+import { ARCHITECTURE_HTML } from './architecture';
 import { groupNightlySummaryEnabled, groupSheetSendEnabled, ownerSheetDmEnabled } from '../scheduler/groupUpdates';
 import logger from '../utils/logger';
 
@@ -89,6 +90,12 @@ export function startDashboard(options: DashboardOptions): http.Server {
     res.type('html').send(LINK_HTML);
   });
 
+  app.get('/architecture', (_req, res) => {
+    res.type('html').send(ARCHITECTURE_HTML);
+  });
+
+  app.use('/assets', express.static(path.resolve('docs/assets')));
+
   app.get('/manifest.webmanifest', (_req, res) => {
     res.json({
       name: 'Bring My Flowers',
@@ -150,6 +157,8 @@ export function startDashboard(options: DashboardOptions): http.Server {
     const staged = (db.prepare(`
       SELECT COUNT(*) AS n FROM group_messages WHERE processed_at IS NULL
     `).get() as { n: number }).n;
+    const customerCount = (db.prepare(`SELECT COUNT(*) AS n FROM customers`).get() as { n: number }).n;
+    const activeSubs = (db.prepare(`SELECT COUNT(*) AS n FROM subscriptions WHERE status = 'ACTIVE'`).get() as { n: number }).n;
     const health = buildHealth();
     res.json({
       today: summarize(now),
@@ -158,6 +167,8 @@ export function startDashboard(options: DashboardOptions): http.Server {
       renewalsDue: renewalsDue(db, now).length,
       reviewCount,
       stagedUpdates: staged,
+      customerCount,
+      activeSubscriptions: activeSubs,
       qaMode: options.qaMode ?? 'Local read-only tools',
       health
     });

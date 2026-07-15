@@ -57,7 +57,7 @@ foreach ($dir in @('data', 'sessions', 'logs', 'backups\whatsapp-session')) {
   '4. Edit .env - set UPDATES_GROUP_JID to your Updates WhatsApp group',
   '5. Open Bring My Flowers from the Desktop and scan the QR on the Link page',
   '',
-  'Day-to-day: use the Desktop shortcut. Sheets are on the dashboard.',
+  'Day-to-day: use the Desktop shortcut. Sheets on the dashboard + nightly in Updates group.',
   'Personal WhatsApp sheet DMs are OFF.',
   '',
   'Full guide: docs\OWNER-CONSOLE.md'

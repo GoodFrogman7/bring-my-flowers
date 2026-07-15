@@ -30,13 +30,13 @@ export function ownerSheetDmEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 /**
- * Auto-posting the .xlsx into the Updates group is off by default.
- * Sheets live on the owner dashboard; staff get the file only when they ask
- * "Bot, send sheet". Set GROUP_SHEET_SEND=1 to restore nightly group upload.
+ * Auto-posting the .xlsx into the Updates group is on by default (staff pull
+ * from the group; owner uses the dashboard). Set GROUP_SHEET_SEND=0 to disable.
  */
 export function groupSheetSendEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.GROUP_SHEET_SEND || '0').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
+  const raw = (env.GROUP_SHEET_SEND ?? '1').trim().toLowerCase();
+  if (raw === '0' || raw === 'false' || raw === 'no') return false;
+  return raw === '1' || raw === 'true' || raw === 'yes' || env.GROUP_SHEET_SEND === undefined;
 }
 
 /**
@@ -58,8 +58,8 @@ const TIMEZONE = 'Asia/Kolkata';
 
 /**
  * Nightly job: apply staged Updates-group messages, regenerate tomorrow's
- * delivery sheet on disk for the owner dashboard. WhatsApp stays silent
- * unless GROUP_NIGHTLY_SUMMARY / GROUP_SHEET_SEND / OWNER_SHEET_DM are on.
+ * delivery sheet on disk for the owner dashboard, and post the .xlsx to the
+ * Updates group by default. Personal owner DMs stay off unless OWNER_SHEET_DM=1.
  * On-demand "Bot, send sheet" is handled live by GroupAssistant.
  */
 export class GroupUpdatesScheduler {

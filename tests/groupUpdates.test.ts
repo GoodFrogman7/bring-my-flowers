@@ -9,7 +9,7 @@ import {
   processGroupMessages
 } from '../src/business/groupUpdates';
 import { dueRows } from '../src/business/delSheet';
-import { GroupUpdatesScheduler } from '../src/scheduler/groupUpdates';
+import { GroupUpdatesScheduler, ownerSheetDmEnabled, groupSheetSendEnabled } from '../src/scheduler/groupUpdates';
 import { MessageSender } from '../src/bot/messageSender';
 
 const TODAY = '2026-07-06'; // Monday
@@ -233,7 +233,15 @@ Do not ask for payment`;
 });
 
 describe('GroupUpdatesScheduler.runOnce', () => {
-  it('processes updates and writes the sheet locally without WhatsApp spam by default', async () => {
+  it('defaults: group sheet on, owner DM off', () => {
+    const env = { ...process.env };
+    delete env.OWNER_SHEET_DM;
+    delete env.GROUP_SHEET_SEND;
+    expect(ownerSheetDmEnabled(env)).toBe(false);
+    expect(groupSheetSendEnabled(env)).toBe(true);
+  });
+
+  it('posts sheet to the Updates group by default but never DMs the owner', async () => {
     const prevDm = process.env.OWNER_SHEET_DM;
     const prevGroup = process.env.GROUP_SHEET_SEND;
     const prevSummary = process.env.GROUP_NIGHTLY_SUMMARY;
@@ -260,14 +268,35 @@ describe('GroupUpdatesScheduler.runOnce', () => {
     const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;
     expect(status).toBe('HOLD');
 
-    // Quiet by default: sheet is for the dashboard, not WhatsApp
     expect(sent).toHaveLength(0);
-    expect(docs).toHaveLength(0);
+    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
+    expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(0);
     expect(fs.existsSync(`./data/del-sheet-${TOMORROW}.xlsx`)).toBe(true);
 
     if (prevDm === undefined) delete process.env.OWNER_SHEET_DM; else process.env.OWNER_SHEET_DM = prevDm;
     if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
     if (prevSummary === undefined) delete process.env.GROUP_NIGHTLY_SUMMARY; else process.env.GROUP_NIGHTLY_SUMMARY = prevSummary;
+  });
+
+  it('skips the group sheet when GROUP_SHEET_SEND=0', async () => {
+    const prevGroup = process.env.GROUP_SHEET_SEND;
+    process.env.GROUP_SHEET_SEND = '0';
+    const docs: Array<{ to: string; filePath: string }> = [];
+    const sender: MessageSender = {
+      async sendMessage() { return true; },
+      async sendMessageToMultiple() { /* not used */ },
+      isConnected: () => true,
+      async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
+    };
+
+    const scheduler = new GroupUpdatesScheduler({
+      db, sender, groupJid: 'g@g.us', delSheetDir: './data', today: () => TODAY
+    });
+    await scheduler.runOnce();
+
+    expect(docs).toHaveLength(0);
+
+    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
   });
 
   it('can still DM the sheet when OWNER_SHEET_DM=1 and GROUP_SHEET_SEND=1', async () => {

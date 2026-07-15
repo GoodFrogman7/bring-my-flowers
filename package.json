@@ -17,7 +17,7 @@
     "dev:twilio": "ts-node src/index.ts twilio",
     "dev:cloud": "ts-node src/index.ts cloud",
     "dev:enhanced": "ts-node src/index.ts enhanced",
-    "build": "tsc",
+    "build": "node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc",
     "watch": "tsc -w",
     "test": "vitest run",
     "test:watch": "vitest",
