@@ -194,20 +194,8 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       console.error('\n⚠️  Set UPDATES_GROUP_JID in .env (the ...@g.us JID). The dashboard will show a red banner until this is fixed.\n');
     }
 
-    logger.info('Starting WhatsApp (scan the QR with the customer-care phone)...');
-    await baileysBot.start();
-    // First-time pairing needs a human to fetch the QR and scan — allow 5 min
-    // by default; CONNECT_TIMEOUT_SECONDS overrides for slow first-time setup.
-    const connectTimeout = parseInt(process.env.CONNECT_TIMEOUT_SECONDS || '300');
-    let attempts = 0;
-    while (!baileysBot.isConnected() && attempts < connectTimeout) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      attempts++;
-    }
-    if (!baileysBot.isConnected()) {
-      logger.error(`WhatsApp failed to connect within ${connectTimeout} seconds`);
-      process.exit(1);
-    }
+    // Start the dashboard before waiting on WhatsApp so /link QR is reachable
+    // while the phone is still pairing.
   }
 
   // Local owner dashboard (127.0.0.1 only). DASHBOARD_PORT=0 disables it.
@@ -236,6 +224,23 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
         ? `Cloud AI (${cloudProvider.name}) with read-only tools`
         : 'Local read-only tools + Ollama fallback'
     });
+  }
+
+  if (transport === 'baileys' && baileysBotRef) {
+    logger.info('Starting WhatsApp (scan the QR with the customer-care phone)...');
+    await baileysBotRef.start();
+    // First-time pairing needs a human to fetch the QR and scan — allow 5 min
+    // by default; CONNECT_TIMEOUT_SECONDS overrides for slow first-time setup.
+    const connectTimeout = parseInt(process.env.CONNECT_TIMEOUT_SECONDS || '300');
+    let attempts = 0;
+    while (!baileysBotRef.isConnected() && attempts < connectTimeout) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempts++;
+    }
+    if (!baileysBotRef.isConnected()) {
+      logger.error(`WhatsApp failed to connect within ${connectTimeout} seconds`);
+      process.exit(1);
+    }
   }
 
   const sheetDmOn = (process.env.OWNER_SHEET_DM || '0').trim() === '1' ||

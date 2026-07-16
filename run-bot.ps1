@@ -66,13 +66,15 @@ while ($true) {
   Log-Launcher "Owner dashboard: http://localhost:$dashPort (use Launch-BMF.bat to open)"
 
   # Prefer compiled production entry; fall back to ts-node for developers.
+  # Console output (incl. crash stack traces) goes to logs\bot-console.log.
   if (Test-Path 'dist\index.js') {
     $env:BOT_MODE = 'business'
-    node dist/index.js business
+    cmd /c "node dist\index.js business >> logs\bot-console.log 2>&1"
   } else {
     Log-Launcher "dist/ missing - running ts-node (run npm run build for production)"
-    npm run dev:business
+    cmd /c "npm run dev:business >> logs\bot-console.log 2>&1"
   }
+  Log-Launcher "node exit code: $LASTEXITCODE"
 
   Log-Launcher "Bot exited - restarting in 15s"
   Start-Sleep 15
