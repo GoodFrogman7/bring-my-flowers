@@ -46,6 +46,7 @@ function suggestedAction(classification: string, reason: string): string {
   if (r.includes('no customer')) return 'Confirm the name spelling or create the customer, then re-post a clear update.';
   if (r.includes('incomplete order') || r.includes('missing')) return 'Ask staff for phone, address, date, and product details in one message.';
   if (r.includes('combined')) return 'Split into separate Updates messages (one action each).';
+  if (r.includes('dormant')) return 'Check with the customer/owner if still active — reply "renew <id>" to resume, or mark the subscription closed in the Master.';
   if (r.includes('subscription')) return 'Confirm pack and start day with the owner, then apply manually.';
   if (classification === 'UNCLEAR') return 'Clarify with staff in the Updates group, then mark handled.';
   return 'Handle in the Updates group or Master sheet, then mark handled.';

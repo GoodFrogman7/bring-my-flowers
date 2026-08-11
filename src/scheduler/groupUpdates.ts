@@ -4,6 +4,7 @@ import { MessageSender } from '../bot/messageSender';
 import { OllamaClient } from '../llm/ollama';
 import { processGroupMessages, formatGroupSummary } from '../business/groupUpdates';
 import { writeDelSheetDetailed } from '../business/delSheet';
+import { autoRenewDueSubscriptions, flagDormantForReview } from '../business/renewal';
 import { todayIST, addDays } from '../business/dates';
 import logger from '../utils/logger';
 
@@ -91,6 +92,19 @@ export class GroupUpdatesScheduler {
     const tomorrow = addDays(today, 1);
 
     const result = await processGroupMessages(db, today, ollama);
+
+    // Real customers essentially never text "renew" — the owner just keeps
+    // extending everyone by default. Without this, subscriptions silently
+    // stop appearing on the sheet the moment their current cycle runs out.
+    const renewal = autoRenewDueSubscriptions(db, today);
+    if (renewal.flagged.length > 0) {
+      const newlyFlagged = flagDormantForReview(db, renewal.flagged, new Date().toISOString());
+      logger.warn(
+        { flagged: renewal.flagged.length, newlyFlagged },
+        'Subscriptions dormant beyond the auto-renew window — surfaced on the dashboard Review queue'
+      );
+    }
+
     const outPath = `${delSheetDir ?? './data'}/del-sheet-${tomorrow}.xlsx`;
     const sheet = writeDelSheetDetailed(db, tomorrow, outPath);
 
@@ -121,6 +135,8 @@ export class GroupUpdatesScheduler {
     logger.info({
       ...result,
       escalated: result.escalated.length,
+      autoRenewed: renewal.renewed.length,
+      autoRenewFlagged: renewal.flagged.length,
       sheetRows: sheet.rows,
       sheetPath: outPath,
       groupSheetSend: groupSheetSendEnabled(),

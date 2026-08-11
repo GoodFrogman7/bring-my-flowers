@@ -1,21 +1,27 @@
 /**
  * Import the owner's Master workbook into the business datastore.
  *
- *   npx ts-node scripts/import-master.ts <path-to-Master.xlsx> [db-path]
+ *   npx ts-node scripts/import-master.ts <path-to-Master.xlsx> [db-path] [--as-of YYYY-MM-DD]
  *
  * Wipes and reloads (migration tool, not a sync). Prints an import report.
  */
 import { openDb } from '../src/business/db';
 import { importMaster } from '../src/business/importMaster';
+import { todayIST } from '../src/business/dates';
 
-const [workbookPath, dbPath = './data/business.db'] = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const asOfIndex = rawArgs.indexOf('--as-of');
+const asOf = asOfIndex >= 0 ? rawArgs[asOfIndex + 1] : todayIST();
+const positional = asOfIndex >= 0 ? [...rawArgs.slice(0, asOfIndex), ...rawArgs.slice(asOfIndex + 2)] : rawArgs;
+const [workbookPath, dbPath = './data/business.db'] = positional;
 if (!workbookPath) {
-  console.error('Usage: npx ts-node scripts/import-master.ts <Master.xlsx> [db-path]');
+  console.error('Usage: npx ts-node scripts/import-master.ts <Master.xlsx> [db-path] [--as-of YYYY-MM-DD]');
   process.exit(1);
 }
 
 const db = openDb(dbPath);
-const report = importMaster(db, workbookPath);
+const report = importMaster(db, workbookPath, { asOf });
+console.log(`asOf: ${asOf} (IST)`);
 
 console.log('\n=== Master import report ===');
 console.log(`Rows in MASTER tab:   ${report.totalRows}`);
