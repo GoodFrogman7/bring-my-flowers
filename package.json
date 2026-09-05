@@ -45,7 +45,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@types/express": "^5.0.6",
-    "@whiskeysockets/baileys": "^6.7.23",
+    "@whiskeysockets/baileys": "^6.7.24",
     "better-sqlite3": "^12.11.1",
     "body-parser": "^2.2.1",
     "dotenv": "^16.4.1",

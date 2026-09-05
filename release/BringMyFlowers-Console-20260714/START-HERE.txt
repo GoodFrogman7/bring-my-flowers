@@ -1,0 +1,13 @@
+﻿Bring My Flowers - Owner Console
+================================
+
+1. Install Node.js 18+ LTS from https://nodejs.org/
+2. Unzip this folder anywhere (Desktop is fine)
+3. Double-click Setup.bat
+4. Edit .env - set UPDATES_GROUP_JID to your Updates WhatsApp group
+5. Open Bring My Flowers from the Desktop and scan the QR on the Link page
+
+Day-to-day: use the Desktop shortcut. Sheets are on the dashboard.
+Personal WhatsApp sheet DMs are OFF.
+
+Full guide: docs\OWNER-CONSOLE.md

@@ -23,13 +23,16 @@ function Read-EnvPort {
   return $port
 }
 
-# Single-instance guard: bail if another copy of the bot is already running.
-$existing = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -match 'index\.(ts|js)\s+business|dist[\\/]index\.js\s+business' }
-if ($existing) {
-  Log-Launcher "Flower bot already running (pid $($existing.ProcessId)) - not starting a second copy."
-  Start-Sleep 10
-  exit 0
+# Kill any leftover/hung bot process before we start managing a new one. Belt-and-braces
+# against the watchdog looping forever while a stale-but-alive process (e.g. one that got
+# stuck instead of crashing) still holds the WhatsApp session lock and port 8787.
+function Stop-StaleBotProcess {
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+    Where-Object { $_.CommandLine -match 'index\.(ts|js)\s+business|dist[\\/]index\.js\s+business' } |
+    ForEach-Object {
+      Log-Launcher "Stopping stale flower bot process (pid $($_.ProcessId)) before restart."
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Make sure Ollama is up (bot works without it - local tools + cloud Q&A cover gaps).
@@ -50,6 +53,8 @@ try {
 
 $dashPort = Read-EnvPort
 while ($true) {
+  Stop-StaleBotProcess
+
   # Preserve linked-device credentials before every launch. Keep seven newest.
   if (Test-Path 'sessions\creds.json') {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'

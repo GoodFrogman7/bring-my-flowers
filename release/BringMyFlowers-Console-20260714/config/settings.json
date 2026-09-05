@@ -1,0 +1,29 @@
+{
+  "ollama": {
+    "endpoint": "http://localhost:11434",
+    "model": "llama3.2:3b",
+    "timeout": 30000
+  },
+  "whatsapp": {
+    "sessionPath": "./sessions",
+    "owners": [],
+    "reconnectDelay": 5000,
+    "maxReconnectAttempts": 10
+  },
+  "excel": {
+    "filePath": "./data/business_data.xlsx",
+    "backupPath": "./backups",
+    "backupBeforeWrite": true
+  },
+  "scheduler": {
+    "summaryTime": "22:00",
+    "recurringTime": "07:00",
+    "reminderTime": "08:30",
+    "timezone": "Asia/Kolkata"
+  },
+  "messaging": {
+    "confirmationRequired": true,
+    "rateLimitPerMinute": 20
+  }
+}
+

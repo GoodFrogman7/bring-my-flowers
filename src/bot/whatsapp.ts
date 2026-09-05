@@ -122,6 +122,34 @@ export class WhatsAppBot implements MessageSender {
     this.sock = null;
   }
 
+  /**
+   * Baileys swallows fetchProps/executeInitQueries failures internally (logs via
+   * onUnexpectedError, never emits 'connection.update' close) — the socket stays
+   * "connected" while the session is actually unusable and further messages fail
+   * to decrypt. Trap that specific log line and force an exit so the launcher
+   * restarts cleanly instead of the process zombie-ing indefinitely.
+   */
+  private wrapLoggerForFatalInitQueries(): typeof logger {
+    const base = logger;
+    return new Proxy(base, {
+      get(target, prop, _receiver) {
+        const value = (target as any)[prop];
+        if (prop !== 'error' || typeof value !== 'function') {
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+        return (...args: any[]) => {
+          const result = value.apply(target, args);
+          const msg = args[args.length - 1];
+          if (msg === "unexpected error in 'init queries'") {
+            target.error('WhatsApp init-queries failed post-connect — connection is unusable. Exiting so the launcher restarts cleanly.');
+            process.exit(1);
+          }
+          return result;
+        };
+      }
+    }) as unknown as typeof logger;
+  }
+
   private quarantineSession(reason: string): void {
     try {
       if (!fs.existsSync(this.sessionPath)) return;
@@ -155,7 +183,7 @@ export class WhatsAppBot implements MessageSender {
         },
         printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
-        logger: logger as any,
+        logger: this.wrapLoggerForFatalInitQueries() as any,
         getMessage: async () => ({ conversation: '' })
       });
 
@@ -171,6 +199,11 @@ export class WhatsAppBot implements MessageSender {
 
         if (connection === 'close') {
           this.connected = false;
+          // Whatever QR was on screen is dead the moment the socket closes
+          // (ref batch exhausted, restart required, etc.) — keeping it
+          // displayed lets someone scan a code WhatsApp will just reject as
+          // expired. Dashboard shows "waiting for QR" until the next one lands.
+          this.latestQr = null;
           const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
           this.lastDisconnectStatus = statusCode ?? null;
           this.lastError = (lastDisconnect?.error as Error)?.message ?? 'Connection closed';
@@ -192,24 +225,37 @@ export class WhatsAppBot implements MessageSender {
             this.lastError = 'WhatsApp opened elsewhere (conflict). Close other linked sessions or wait for reconnect.';
           }
 
-          this.armDisconnectExitTimer();
+          // Only apply the "come back online quickly or restart" watchdogs to a
+          // previously-linked session that dropped. During initial pairing (no
+          // creds.registered yet) QR codes rotate/close repeatedly by design —
+          // killing the process mid-cycle just tears the connection out from
+          // under a phone that's actively mid-scan.
+          const registered = state.creds.registered;
+          if (registered) {
+            this.armDisconnectExitTimer();
+          }
 
-          if (shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
+          // The attempt cap exists to stop a previously-linked session from
+          // retrying forever against a dead network. It doesn't apply during
+          // initial pairing: Baileys closes/reopens the socket on every QR
+          // refresh by design, so counting those against the cap can exit
+          // the process before a human has had a real chance to scan.
+          if (shouldReconnect && (!registered || this.reconnectAttempts < this.maxReconnectAttempts)) {
+            if (registered) this.reconnectAttempts++;
             logger.info({
               attempt: this.reconnectAttempts,
               maxAttempts: this.maxReconnectAttempts,
               delay: this.reconnectDelay
             }, 'Attempting to reconnect');
 
-            this.armReconnectWatchdog();
+            if (registered) this.armReconnectWatchdog();
             setTimeout(() => {
               this.start().catch(error => {
                 logger.error({ error }, 'Reconnect attempt threw — exiting so the launcher restarts a fresh process');
                 process.exit(1);
               });
             }, this.reconnectDelay);
-          } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          } else if (registered && this.reconnectAttempts >= this.maxReconnectAttempts) {
             logger.error('Max reconnect attempts reached — exiting so the launcher restarts a fresh process.');
             process.exit(1);
           }
