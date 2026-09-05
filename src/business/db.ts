@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS one_time_orders (
   phone TEXT NOT NULL DEFAULT '',
   address TEXT NOT NULL DEFAULT '',
   zone TEXT NOT NULL DEFAULT '',
-  date TEXT NOT NULL DEFAULT '',
+  date TEXT NOT NULL DEFAULT '',              -- booking date, as the owner's Master records it
+  delivery_date TEXT NOT NULL DEFAULT '',     -- day the flowers actually go out (usually date + 1)
   time_slot TEXT NOT NULL DEFAULT '',
   amount REAL NOT NULL DEFAULT 0,
   description TEXT NOT NULL DEFAULT '',
@@ -190,7 +191,10 @@ const MIGRATIONS = [
   `ALTER TABLE group_messages ADD COLUMN external_message_id TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE group_messages ADD COLUMN reply_to_external_id TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE group_update_log ADD COLUMN resolved_at TEXT`,
-  `ALTER TABLE group_update_log ADD COLUMN escalation_reason TEXT NOT NULL DEFAULT ''`
+  `ALTER TABLE group_update_log ADD COLUMN escalation_reason TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE one_time_orders ADD COLUMN delivery_date TEXT NOT NULL DEFAULT ''`,
+  // Index lives here, not in SCHEMA, so it never runs before the column exists.
+  `CREATE INDEX IF NOT EXISTS idx_one_time_delivery_date ON one_time_orders(delivery_date)`
 ];
 
 export function openDb(filePath: string): Database.Database {

@@ -48,9 +48,9 @@ describe('findCustomerByPhone', () => {
 });
 
 describe('applyInstruction', () => {
-  it('SKIP_TODAY moves only the next delivery by a week', () => {
+  it('SKIP_TODAY pushes the held delivery and everything after it by a week (never two on one date)', () => {
     const result = applyInstruction(db, customer(), { type: 'SKIP_TODAY' }, TODAY);
-    expect(effectiveDates()).toEqual(['2026-07-13', '2026-07-13', '2026-07-20', '2026-07-27']);
+    expect(effectiveDates()).toEqual(['2026-07-13', '2026-07-20', '2026-07-27', '2026-08-03']);
     expect(result.reply).toContain('2026-07-13');
     const remarks = (db.prepare(`SELECT remarks FROM customers WHERE id='100'`).get() as { remarks: string }).remarks;
     expect(remarks).toContain('(06/07)'); // owner's dd/mm stamp

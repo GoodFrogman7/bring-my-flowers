@@ -118,8 +118,22 @@ describe('importMaster', () => {
     expect(deliveries.map(d => d.planned_date)).toEqual(['2026-06-18', '2026-06-21', '2026-06-25', '2026-06-28']);
     expect(deliveries[0].status).toBe('DELIVERED'); // before asOf
     expect(deliveries[1].status).toBe('PLANNED');
-    const sub = db.prepare('SELECT frequency FROM subscriptions').get() as { frequency: string };
+    const sub = db.prepare('SELECT frequency, day2 FROM subscriptions').get() as { frequency: string; day2: string };
     expect(sub.frequency).toBe('BIWEEKLY');
+    expect(sub.day2).toBe('Sunday'); // read off the pair's second visit (2026-06-21), not guessed as +3
+  });
+
+  it('falls back to the second weekday named in the Day cell when biweekly pairs are empty', () => {
+    const file = writeMaster([
+      masterRow({
+        [C.ACTIVE]: 'Active 1', [C.DATE]: serial('2026-06-15'), [C.ID]: '1148',
+        [C.NAME]: 'Meera', [C.PACK]: 1600, [C.REVENUE]: 200, [C.TYPE]: 'Bloom',
+        [C.DAY]: 'Thursday n Monday', [C.PAY_STATUS]: 'Completed'
+      })
+    ]);
+    importMaster(db, file, { asOf: '2026-06-20' });
+    const sub = db.prepare('SELECT day2 FROM subscriptions').get() as { day2: string };
+    expect(sub.day2).toBe('Monday');
   });
 
   it('routes Bouquet rows to one_time_orders and skips junk rows', () => {
@@ -140,6 +154,21 @@ describe('importMaster', () => {
     const order = db.prepare('SELECT * FROM one_time_orders').get() as Record<string, unknown>;
     expect(order.id).toBe('B56138');
     expect(order.amount).toBe(1350);
+    expect(order.date).toBe('2026-07-06');          // booking date, as the Master has it
+    expect(order.delivery_date).toBe('2026-07-07'); // flowers go out the next day
+  });
+
+  it('uses an explicit delivery date on a Bouquet row when one is filled in', () => {
+    const file = writeMaster([
+      masterRow({
+        [C.ACTIVE]: 'Bouquet', [C.DATE]: serial('2026-07-06'), [C.ID]: 'B56139',
+        [C.NAME]: 'Walk-in', [C.PACK]: 1350, [C.REVENUE]: 1350, [C.TYPE]: 'Bouquet',
+        [C.PAY_STATUS]: 'Pending', [C.DEL]: serial('2026-07-09')
+      })
+    ]);
+    importMaster(db, file, { asOf: '2026-07-06' });
+    const order = db.prepare('SELECT delivery_date FROM one_time_orders').get() as { delivery_date: string };
+    expect(order.delivery_date).toBe('2026-07-09');
   });
 
   it('puts a Hold customer on HOLD so they are excluded from delivery sheets', () => {
@@ -239,9 +268,17 @@ describe('feedback import + delivery sheet', () => {
     ]);
     importMaster(db, file, { asOf: '2026-07-06' });
 
-    const rows = dueRows(db, '2026-07-06');
+    // Ordered on the 6th → on the 7th's sheet, not the 6th's
+    expect(dueRows(db, '2026-07-06')).toHaveLength(0);
+    const rows = dueRows(db, '2026-07-07');
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('B56138');
     expect(rows[0].collect).toBe(1350);
+  });
+
+  it('still lists legacy one-time orders (no delivery_date) on their recorded date', () => {
+    db.prepare(`INSERT INTO one_time_orders (id, customer_name, date, amount, payment_status)
+                VALUES ('B77002', 'Legacy', '2026-07-06', 900, 'PENDING')`).run();
+    expect(dueRows(db, '2026-07-06').map(r => r.id)).toEqual(['B77002']);
   });
 });

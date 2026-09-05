@@ -29,6 +29,46 @@ export function nextWeekdayAfter(date: string, weekday: number): string {
   return candidate;
 }
 
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** "Thursday" → 4; -1 when the label isn't a plain weekday name. */
+export function weekdayIndex(label: string): number {
+  const target = label.trim().toLowerCase();
+  return WEEKDAY_LABELS.findIndex(d => d.toLowerCase() === target);
+}
+
+/** Every weekday name mentioned in free text ("Thu n Sun", "Thursday and Sunday"), in order, deduped. */
+export function weekdaysMentioned(text: string): number[] {
+  const found: number[] = [];
+  for (const match of text.toLowerCase().matchAll(/\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/g)) {
+    const index = WEEKDAY_LABELS.findIndex(d => d.toLowerCase().startsWith(match[1]));
+    if (index >= 0 && !found.includes(index)) found.push(index);
+  }
+  return found;
+}
+
+export function weekdayLabel(index: number): string {
+  return WEEKDAY_LABELS[index] ?? '';
+}
+
+/**
+ * The delivery dates of one cycle, starting on `firstDate`: one per week for
+ * WEEKLY; for BIWEEKLY each week also gets the customer's second visit day
+ * (`day2`), falling back to +3 days when no second day is on record.
+ */
+export function cycleDates(firstDate: string, frequency: string, day2: string, weeks: number = 4): string[] {
+  const biweekly = frequency === 'BIWEEKLY';
+  const secondDay = weekdayIndex(day2);
+  const dates: string[] = [];
+  let weekStart = firstDate;
+  for (let week = 0; week < weeks; week++) {
+    dates.push(weekStart);
+    if (biweekly) dates.push(secondDay >= 0 ? nextWeekdayAfter(weekStart, secondDay) : addDays(weekStart, 3));
+    weekStart = addDays(weekStart, 7);
+  }
+  return dates;
+}
+
 /** dd/mm stamp the owner uses in remarks, e.g. "(06/07)". */
 export function remarkStamp(date: string): string {
   const [, month, day] = date.split('-');

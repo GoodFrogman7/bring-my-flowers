@@ -116,7 +116,9 @@ export function dueRows(db: BusinessDb, date: string): DelSheetRow[] {
   }
   const oneTimeRows = db.prepare(`
     SELECT id, customer_name, phone, address, zone, time_slot, amount, description, remarks, payment_status
-    FROM one_time_orders WHERE date = ? ORDER BY zone, customer_name
+    FROM one_time_orders
+    WHERE COALESCE(NULLIF(delivery_date, ''), date) = ?
+    ORDER BY zone, customer_name
   `).all(date) as OneTimeDue[];
 
   for (const order of oneTimeRows) {

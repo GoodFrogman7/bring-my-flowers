@@ -402,10 +402,10 @@ function applyProposal(db: BusinessDb, proposal: ClassifyProposal, today: string
       const { id, order } = proposal.mutation;
       db.prepare(`
         INSERT INTO one_time_orders
-          (id, customer_name, phone, address, zone, date, time_slot, amount, description, payment_status, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+          (id, customer_name, phone, address, zone, date, delivery_date, time_slot, amount, description, payment_status, remarks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
       `).run(
-        id, order.customerName, order.phone, order.address, order.zone, order.date,
+        id, order.customerName, order.phone, order.address, order.zone, order.date, order.date,
         order.timeSlot, order.amount, order.description, order.paymentStatus
       );
       actionTaken = `One-off order ${id} created for ${order.date}`;

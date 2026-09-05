@@ -1,7 +1,6 @@
 import { BusinessDb } from './db';
 import { Instruction } from './instructions';
-import { addDays, nextWeekdayAfter, remarkStamp, weekdayOf, ordinal } from './dates';
-import { DAY_LABELS } from '../utils/recurrence';
+import { addDays, cycleDates, nextWeekdayAfter, remarkStamp, weekdayIndex, weekdayLabel, weekdayOf, ordinal } from './dates';
 import logger from '../utils/logger';
 
 /**
@@ -125,7 +124,11 @@ export function applyInstruction(
       }
       const next = upcoming[0];
       const newDate = addDays(effectiveDate(next), 7);
-      setChangedDate(db, next.id, newDate);
+      // Push the whole tail, not just the held delivery — otherwise it lands on
+      // the following week's date and the customer shows up twice on that sheet.
+      for (const delivery of upcoming) {
+        setChangedDate(db, delivery.id, addDays(effectiveDate(delivery), 7));
+      }
       appendRemark(db, customer.id, `Hold ${effectiveDate(next) === today ? 'today' : effectiveDate(next)} - moved to ${newDate}`, today);
       return {
         reply: `Done — we've held your delivery of ${effectiveDate(next)}. Next delivery: ${newDate}.${SIGNOFF}`,
@@ -164,15 +167,12 @@ export function applyInstruction(
     case 'RESUME': {
       if (!subscription) return noSubscription(customer);
       db.prepare(`UPDATE subscriptions SET status = 'ACTIVE' WHERE id = ?`).run(subscription.id);
-      const upcoming = upcomingDeliveries(db, subscription.id, '0000-01-01');
-      const fixedDay = DAY_LABELS.findIndex(d => d.toLowerCase() === subscription.day.toLowerCase());
-      let cursor = fixedDay >= 0 ? nextWeekdayAfter(today, fixedDay) : addDays(today, 1);
-      for (const delivery of upcoming) {
-        if (effectiveDate(delivery) <= today) {
-          setChangedDate(db, delivery.id, cursor);
-          cursor = addDays(cursor, subscription.frequency === 'BIWEEKLY' ? 3 : 7);
-        }
-      }
+      const overdue = upcomingDeliveries(db, subscription.id, '0000-01-01').filter(d => effectiveDate(d) <= today);
+      const fixedDay = weekdayIndex(subscription.day);
+      const first = fixedDay >= 0 ? nextWeekdayAfter(today, fixedDay) : addDays(today, 1);
+      const perWeek = subscription.frequency === 'BIWEEKLY' ? 2 : 1;
+      const dates = cycleDates(first, subscription.frequency, subscription.day2, Math.ceil(overdue.length / perWeek));
+      overdue.forEach((delivery, index) => setChangedDate(db, delivery.id, dates[index]));
       appendRemark(db, customer.id, 'Resumed', today);
       const next = upcomingDeliveries(db, subscription.id, today)[0];
       return {
@@ -183,7 +183,7 @@ export function applyInstruction(
 
     case 'DAY_CHANGE': {
       if (!subscription) return noSubscription(customer);
-      const newDay = DAY_LABELS[instruction.day];
+      const newDay = weekdayLabel(instruction.day);
       db.prepare(`UPDATE subscriptions SET day = ? WHERE id = ?`).run(newDay, subscription.id);
       const upcoming = upcomingDeliveries(db, subscription.id, today);
       for (const delivery of upcoming) {

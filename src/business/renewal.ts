@@ -1,15 +1,18 @@
 import { BusinessDb } from './db';
-import { addDays, nextWeekdayAfter } from './dates';
+import { addDays, cycleDates, nextWeekdayAfter, weekdayIndex, weekdayOf } from './dates';
 import { appendRemark } from './actions';
-import { DAY_LABELS } from '../utils/recurrence';
 import logger from '../utils/logger';
 
 /**
  * Create the next cycle for a customer's subscription: 4 weekly deliveries on
- * the fixed day, or 8 biweekly (paired: fixed day + 3 days later, the
- * Sun/Thu-style split the zones run on). Payment starts PENDING with the full
- * pack to collect. The renewal moment is the business's main revenue leak —
- * this makes saying "renew" enough to lock the next cycle in.
+ * the fixed day, or 8 biweekly (fixed day + the customer's second day each
+ * week). Payment starts PENDING with the full pack to collect. The renewal
+ * moment is the business's main revenue leak — this makes saying "renew"
+ * enough to lock the next cycle in.
+ *
+ * The new cycle continues the cadence from the previous cycle's last delivery
+ * rather than from today: if the nightly sweep missed a few days (bot down),
+ * the customer's usual day this week is still kept instead of jumping a week.
  */
 
 export interface RenewalResult {
@@ -20,9 +23,9 @@ export interface RenewalResult {
 
 export function createNextCycle(db: BusinessDb, customerId: string, today: string): RenewalResult {
   const subscription = db.prepare(`
-    SELECT id, package_name, pack_amount, frequency, day, status
+    SELECT id, package_name, pack_amount, frequency, day, day2, status
     FROM subscriptions WHERE customer_id = ? ORDER BY id DESC LIMIT 1
-  `).get(customerId) as { id: number; package_name: string; pack_amount: number; frequency: string; day: string; status: string } | undefined;
+  `).get(customerId) as { id: number; package_name: string; pack_amount: number; frequency: string; day: string; day2: string; status: string } | undefined;
 
   if (!subscription) {
     return { ok: false, message: `No subscription found for #${customerId}.` };
@@ -43,8 +46,19 @@ export function createNextCycle(db: BusinessDb, customerId: string, today: strin
   const deliveriesPlanned = biweekly ? 8 : 4;
   const perDelivery = subscription.pack_amount / deliveriesPlanned;
 
-  const fixedDay = DAY_LABELS.findIndex(d => d.toLowerCase() === subscription.day.toLowerCase());
-  const firstDate = fixedDay >= 0 ? nextWeekdayAfter(today, fixedDay) : addDays(today, 1);
+  const lastDelivery = (db.prepare(`
+    SELECT MAX(COALESCE(NULLIF(d.changed_date, ''), d.planned_date)) AS last_date
+    FROM deliveries d JOIN cycles cy ON d.cycle_id = cy.id
+    WHERE cy.subscription_id = ?
+  `).get(subscription.id) as { last_date: string | null }).last_date;
+
+  let fixedDay = weekdayIndex(subscription.day);
+  // Day cells like "Thursday n Sunday" don't parse — trust the actual cadence.
+  if (fixedDay < 0 && lastDelivery) fixedDay = weekdayOf(lastDelivery);
+
+  let firstDate = fixedDay >= 0 ? nextWeekdayAfter(lastDelivery ?? today, fixedDay) : addDays(today, 1);
+  // Today's sheet went out last night — never plan for today or earlier.
+  while (firstDate <= today) firstDate = addDays(firstDate, 7);
 
   const createCycle = db.transaction(() => {
     const cycleId = db.prepare(`
@@ -56,13 +70,9 @@ export function createNextCycle(db: BusinessDb, customerId: string, today: strin
 
     const insertDelivery = db.prepare(`
       INSERT INTO deliveries (cycle_id, seq, planned_date, status) VALUES (?, ?, ?, 'PLANNED')`);
-    let weekStart = firstDate;
-    let seq = 1;
-    for (let week = 0; week < 4; week++) {
-      insertDelivery.run(cycleId, seq++, weekStart);
-      if (biweekly) insertDelivery.run(cycleId, seq++, addDays(weekStart, 3));
-      weekStart = addDays(weekStart, 7);
-    }
+    cycleDates(firstDate, subscription.frequency, subscription.day2).forEach((date, index) => {
+      insertDelivery.run(cycleId, index + 1, date);
+    });
 
     db.prepare(`UPDATE subscriptions SET status = 'ACTIVE' WHERE id = ?`).run(subscription.id);
   });

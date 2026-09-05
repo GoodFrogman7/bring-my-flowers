@@ -10,6 +10,7 @@ import {
   isOneTimeId,
   normalizeCustomerId
 } from './parse';
+import { addDays, weekdayLabel, weekdayOf, weekdaysMentioned } from './dates';
 import logger from '../utils/logger';
 
 /**
@@ -82,6 +83,21 @@ function text(row: MasterRow, col: number): string {
 function num(row: MasterRow, col: number): number {
   const n = Number(row.cells[col]);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * A biweekly customer's second weekday. The Master has no column for it, so
+ * read it off the first date-pair that has both visits filled in; fall back to
+ * the second weekday named in the Day cell ("Thursday n Sunday").
+ */
+function secondWeekday(row: MasterRow): string {
+  for (let pair = 0; pair < 4; pair++) {
+    const first = serialToDate(cell(row, COL.DELIVERY_DATES_START + pair * 2));
+    const second = serialToDate(cell(row, COL.DELIVERY_DATES_START + pair * 2 + 1));
+    if (first && second && second !== first) return weekdayLabel(weekdayOf(second));
+  }
+  const mentioned = weekdaysMentioned(text(row, COL.DAY));
+  return mentioned.length >= 2 ? weekdayLabel(mentioned[1]) : '';
 }
 
 export function importMaster(db: BusinessDb, workbookPath: string, options: { asOf?: string } = {}): ImportReport {
@@ -158,8 +174,8 @@ export function importMaster(db: BusinessDb, workbookPath: string, options: { as
     INSERT INTO deliveries (cycle_id, one_time_order_id, seq, planned_date, changed_date, status)
     VALUES (?, ?, ?, ?, ?, ?)`);
   const insertOneTime = db.prepare(`
-    INSERT OR REPLACE INTO one_time_orders (id, customer_name, phone, address, zone, date, time_slot, amount, description, payment_status, remarks)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    INSERT OR REPLACE INTO one_time_orders (id, customer_name, phone, address, zone, date, delivery_date, time_slot, amount, description, payment_status, remarks)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const wipe = db.transaction(() => {
     for (const table of ['deliveries', 'cycles', 'restrictions', 'subscriptions', 'one_time_orders', 'customers']) {
@@ -203,7 +219,7 @@ export function importMaster(db: BusinessDb, workbookPath: string, options: { as
         num(latest, COL.PACK),
         frequency,
         text(latest, COL.DAY),
-        '', // day2 lives only in remarks ("Friday n Monday"); left for Phase B
+        frequency === 'BIWEEKLY' ? secondWeekday(latest) : '',
         text(latest, COL.TIME_SLOT),
         group.status,
         activeValue === 'corporate' || /corporate/i.test(packageName) ? 1 : 0,
@@ -253,6 +269,11 @@ export function importMaster(db: BusinessDb, workbookPath: string, options: { as
     for (const row of oneTimeRows) {
       const rawId = normalizeCustomerId(cell(row, COL.ID)) || `B-ROW${row.rowNumber}`;
       const date = serialToDate(cell(row, COL.DATE));
+      // The Master's Date on a bouquet row is when it was ordered; the flowers
+      // go out the next day (91 of 100 rows in the owner's real sheets), unless
+      // a delivery date is filled in explicitly.
+      const scheduled = serialToDate(cell(row, COL.DELIVERY_DATES_START)) || serialToDate(cell(row, COL.DELIVERY_DATES_START + 1));
+      const deliveryDate = scheduled || (date ? addDays(date, 1) : '');
       insertOneTime.run(
         rawId,
         text(row, COL.NAME),
@@ -260,6 +281,7 @@ export function importMaster(db: BusinessDb, workbookPath: string, options: { as
         text(row, COL.ADDRESS),
         text(row, COL.ZONE),
         date,
+        deliveryDate,
         text(row, COL.TIME_SLOT),
         num(row, COL.PACK),
         text(row, COL.TYPE),

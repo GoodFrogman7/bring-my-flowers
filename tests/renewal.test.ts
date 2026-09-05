@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, BusinessDb } from '../src/business/db';
-import { autoRenewDueSubscriptions, flagDormantForReview } from '../src/business/renewal';
+import { autoRenewDueSubscriptions, createNextCycle, flagDormantForReview } from '../src/business/renewal';
 
 const TODAY = '2026-08-11'; // Tuesday
 
@@ -9,6 +9,8 @@ let db: BusinessDb;
 interface SeedOptions {
   id: string;
   day: string;
+  day2?: string;
+  frequency?: 'WEEKLY' | 'BIWEEKLY';
   status?: 'ACTIVE' | 'HOLD' | 'CLOSED';
   isGift?: boolean;
   lastDeliveryDate: string;
@@ -21,9 +23,9 @@ function seedSubscriber(opts: SeedOptions) {
   db.prepare(`INSERT INTO customers (id, name, phones, address, zone) VALUES (?, ?, '9876543210', 'H-1', 'Zone A')`)
     .run(opts.id, `Customer ${opts.id}`);
   db.prepare(`
-    INSERT INTO subscriptions (id, customer_id, package_name, pack_amount, frequency, day, time_slot, status, is_gift)
-    VALUES (?, ?, 'Bliss', 1450, 'WEEKLY', ?, '9 AM - 12 PM', ?, ?)
-  `).run(subId, opts.id, opts.day, opts.status ?? 'ACTIVE', opts.isGift ? 1 : 0);
+    INSERT INTO subscriptions (id, customer_id, package_name, pack_amount, frequency, day, day2, time_slot, status, is_gift)
+    VALUES (?, ?, 'Bliss', 1450, ?, ?, ?, '9 AM - 12 PM', ?, ?)
+  `).run(subId, opts.id, opts.frequency ?? 'WEEKLY', opts.day, opts.day2 ?? '', opts.status ?? 'ACTIVE', opts.isGift ? 1 : 0);
   const cycleId = db.prepare(`
     INSERT INTO cycles (subscription_id, renewal_date, deliveries_planned, pack_amount, per_delivery_revenue, payment_status, collect)
     VALUES (?, ?, 4, 1450, 362.5, 'COMPLETED', 0)
@@ -106,6 +108,52 @@ describe('autoRenewDueSubscriptions', () => {
       WHERE s.customer_id = '7' AND d.status = 'PLANNED'
     `).get() as { n: number };
     expect(plannedCount.n).toBe(4); // not 8
+  });
+});
+
+describe('createNextCycle', () => {
+  function plannedDates(customerId: string): string[] {
+    return (db.prepare(`
+      SELECT d.planned_date FROM deliveries d
+      JOIN cycles cy ON cy.id = d.cycle_id
+      JOIN subscriptions s ON s.id = cy.subscription_id
+      WHERE s.customer_id = ? AND d.status = 'PLANNED'
+      ORDER BY d.seq
+    `).all(customerId) as Array<{ planned_date: string }>).map(r => r.planned_date);
+  }
+
+  it('biweekly cycles use the customer’s recorded second day, not a +3 guess', () => {
+    seedSubscriber({ id: '20', day: 'Thursday', day2: 'Monday', frequency: 'BIWEEKLY', lastDeliveryDate: '2026-08-09' });
+    const result = createNextCycle(db, '20', TODAY);
+    expect(result.ok).toBe(true);
+    expect(plannedDates('20')).toEqual([
+      '2026-08-13', '2026-08-17', '2026-08-20', '2026-08-24',
+      '2026-08-27', '2026-08-31', '2026-09-03', '2026-09-07'
+    ]);
+  });
+
+  it('biweekly without a second day on record still pairs Thu with +3 (Sun)', () => {
+    seedSubscriber({ id: '21', day: 'Thursday', frequency: 'BIWEEKLY', lastDeliveryDate: '2026-08-09' });
+    createNextCycle(db, '21', TODAY);
+    expect(plannedDates('21').slice(0, 4)).toEqual(['2026-08-13', '2026-08-16', '2026-08-20', '2026-08-23']);
+  });
+
+  it('a sweep on the delivery day itself plans from next week — today’s sheet already went out', () => {
+    seedSubscriber({ id: '22', day: 'Friday', lastDeliveryDate: '2026-08-07' });
+    createNextCycle(db, '22', '2026-08-14'); // sweep finally runs on the Friday itself
+    expect(plannedDates('22')).toEqual(['2026-08-21', '2026-08-28', '2026-09-04', '2026-09-11']);
+  });
+
+  it('never plans into the past when the subscriber has been dormant for weeks', () => {
+    seedSubscriber({ id: '23', day: 'Friday', lastDeliveryDate: '2026-07-24' });
+    createNextCycle(db, '23', TODAY);
+    expect(plannedDates('23')[0]).toBe('2026-08-14');
+  });
+
+  it('falls back to the actual delivery weekday when the Day cell is not a plain weekday', () => {
+    seedSubscriber({ id: '24', day: 'Thursday n Sunday', lastDeliveryDate: '2026-08-06' });
+    createNextCycle(db, '24', TODAY);
+    expect(plannedDates('24')).toEqual(['2026-08-13', '2026-08-20', '2026-08-27', '2026-09-03']);
   });
 });
 
