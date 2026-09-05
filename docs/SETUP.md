@@ -2,16 +2,18 @@
 
 Complete setup for all modes. Start with the shared steps, then follow the section for your mode.
 
-## Shared prerequisites (all modes)
+## Shared prerequisites
 
 1. **Node.js 18+** — https://nodejs.org
-2. **Ollama** — https://ollama.ai
+
+Ollama is optional for the recommended business mode. Install it only for the
+older generic customer-bot modes or if you set `BUSINESS_USE_OLLAMA=1`.
 
 ```bash
 # Install dependencies
 npm install
 
-# Pull the LLM (about 4GB)
+# Optional: install Ollama (about 4GB) for LLM fallbacks
 ollama pull llama3
 ollama list          # verify
 
@@ -19,7 +21,7 @@ ollama list          # verify
 npm run test:ollama
 ```
 
-Create `.env` from the template and set your owner numbers (they receive daily summaries and alerts):
+For older generic modes, create `.env` from the generic template and set owner numbers (they receive daily summaries and alerts):
 
 ```bash
 cp .env.example .env
@@ -31,7 +33,53 @@ OWNER_NUMBERS=+919876543210,+919876543211
 
 Defaults (Ollama endpoint, summary time, rate limits, order confirmation) live in `config/settings.json`; environment variables override them.
 
-The bot still runs if Ollama is down — classification falls back to regex rules and canned replies — but responses are much better with it.
+The older generic modes still run if Ollama is down — classification falls back to
+regex rules and canned replies. Business mode does not start Ollama unless you
+set `BUSINESS_USE_OLLAMA=1`.
+
+---
+
+## Recommended mode: business owner console
+
+This is the path for the real Gurgaon subscription operation: dashboard update
+paste → SQLite → Excel delivery sheet → local owner dashboard. WhatsApp is an
+optional adapter, not a prerequisite for the owner's daily work.
+
+```bash
+cp config/business.env.template .env
+# BUSINESS_TRANSPORT=dashboard is the simplest default; no QR or group JID:
+npm install
+npm run build
+npm run start:business
+```
+
+`BUSINESS_USE_OLLAMA=0` is the default. The parser and common owner questions
+work without a local model; unclear updates are placed in Review for a human.
+For the Windows handoff, follow [OWNER-CONSOLE.md](OWNER-CONSOLE.md) and use
+`Setup.bat` once, then the desktop shortcut each day.
+
+### Dashboard-first daily workflow
+
+1. Open the dashboard from the Desktop shortcut.
+2. On Overview, paste the exact staff update.
+3. Click **Apply this update**. Clear instructions update SQLite; uncertain
+   instructions appear in **Review** instead of being guessed.
+4. Click **Download tomorrow's sheet** and give the Excel file to the delivery team.
+
+The nightly job also renews eligible subscriptions, flags dormant ones, and
+prepares the next-day sheet even when WhatsApp is completely unavailable.
+
+### Optional legacy WhatsApp group
+
+If the team wants the bot to keep watching the existing Updates group, set:
+
+```env
+BUSINESS_TRANSPORT=baileys
+UPDATES_GROUP_JID=<the Updates group JID>
+```
+
+Then link the business phone with the QR. Dashboard paste/apply remains
+available as a fallback when the group connection is down.
 
 ---
 

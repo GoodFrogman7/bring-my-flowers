@@ -10,8 +10,10 @@ import logger from '../utils/logger';
 
 export interface GroupUpdatesOptions {
   db: BusinessDb;
-  sender: MessageSender;
-  groupJid: string;
+  /** Optional: dashboard-first mode has no outbound messaging transport. */
+  sender?: MessageSender;
+  /** Optional: only the Baileys Updates-group adapter needs a group JID. */
+  groupJid?: string;
   ollama?: OllamaClient;
   delSheetDir?: string;
   /** HH:mm IST — after the day's group chatter, before staff pull tomorrow's sheet. */
@@ -22,6 +24,19 @@ export interface GroupUpdatesOptions {
    */
   ownerDm?: string[];
   today?: () => string;
+}
+
+export interface BusinessOpsRunResult {
+  processed: number;
+  oneOffOrders: number;
+  customerUpdates: number;
+  notes: number;
+  escalated: Array<{ text: string; reason: string }>;
+  autoRenewed: number;
+  autoRenewFlagged: number;
+  tomorrow: string;
+  sheetRows: number;
+  sheetPath: string;
 }
 
 /** Personal sheet DMs are off unless OWNER_SHEET_DM is explicitly enabled. */
@@ -58,10 +73,11 @@ function cronFor(time: string): string {
 const TIMEZONE = 'Asia/Kolkata';
 
 /**
- * Nightly job: apply staged Updates-group messages, regenerate tomorrow's
- * delivery sheet on disk for the owner dashboard, and post the .xlsx to the
- * Updates group by default. Personal owner DMs stay off unless OWNER_SHEET_DM=1.
- * On-demand "Bot, send sheet" is handled live by GroupAssistant.
+ * Nightly business job: apply staged staff messages, regenerate tomorrow's
+ * delivery sheet on disk for the owner dashboard, and optionally post the
+ * .xlsx to the Updates group. Personal owner DMs stay off unless
+ * OWNER_SHEET_DM=1. On-demand "Bot, send sheet" is handled live by
+ * GroupAssistant when the legacy WhatsApp adapter is enabled.
  */
 export class GroupUpdatesScheduler {
   private job: cron.ScheduledTask | null = null;
@@ -86,7 +102,7 @@ export class GroupUpdatesScheduler {
     logger.info('Group updates scheduler stopped');
   }
 
-  async runOnce(): Promise<void> {
+  async runOnce(): Promise<BusinessOpsRunResult> {
     const { db, sender, groupJid, ollama, delSheetDir, ownerDm } = this.options;
     const today = this.today();
     const tomorrow = addDays(today, 1);
@@ -111,11 +127,13 @@ export class GroupUpdatesScheduler {
     const caption = `Delivery sheet for ${tomorrow} — ${sheet.rows} rows, ${sheet.autoAssigned} auto-assigned` +
       (sheet.manual.length > 0 ? `, ${sheet.manual.length} manual (see Procurement tab)` : '');
 
-    if (groupNightlySummaryEnabled()) {
+    const groupMessagingEnabled = Boolean(sender && groupJid);
+
+    if (sender && groupJid && groupNightlySummaryEnabled()) {
       await sender.sendMessage(groupJid, formatGroupSummary(result, today));
     }
 
-    if (groupSheetSendEnabled()) {
+    if (sender && groupJid && groupSheetSendEnabled()) {
       if (sender.sendDocument) {
         const sent = await sender.sendDocument(groupJid, outPath, caption);
         if (!sent) await sender.sendMessage(groupJid, `${caption}\n(file send failed — saved at ${outPath})`);
@@ -124,9 +142,9 @@ export class GroupUpdatesScheduler {
       }
     }
 
-    const dmOwners = ownerSheetDmEnabled() ? (ownerDm ?? []) : [];
+    const dmOwners = sender && ownerSheetDmEnabled() ? (ownerDm ?? []) : [];
     for (const owner of dmOwners) {
-      if (sender.sendDocument) {
+      if (sender?.sendDocument) {
         const sent = await sender.sendDocument(owner, outPath, caption);
         if (!sent) logger.error({ owner, outPath }, 'Failed to DM nightly sheet to owner');
       }
@@ -139,9 +157,18 @@ export class GroupUpdatesScheduler {
       autoRenewFlagged: renewal.flagged.length,
       sheetRows: sheet.rows,
       sheetPath: outPath,
-      groupSheetSend: groupSheetSendEnabled(),
-      groupNightlySummary: groupNightlySummaryEnabled(),
+      groupSheetSend: groupMessagingEnabled && groupSheetSendEnabled(),
+      groupNightlySummary: groupMessagingEnabled && groupNightlySummaryEnabled(),
       ownerDm: dmOwners.length
     }, 'Group updates run complete (sheet on disk for dashboard)');
+
+    return {
+      ...result,
+      autoRenewed: renewal.renewed.length,
+      autoRenewFlagged: renewal.flagged.length,
+      tomorrow,
+      sheetRows: sheet.rows,
+      sheetPath: outPath
+    };
   }
 }

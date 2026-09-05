@@ -26,3 +26,5 @@ desktop.ini
 *.tsbuildinfo
 *.db
 *.db-*
+release/
+data/*.lock

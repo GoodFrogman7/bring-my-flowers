@@ -4,6 +4,7 @@ import { AddressInfo } from 'net';
 import { openDb, BusinessDb } from '../src/business/db';
 import { insertGroupMessage, processGroupMessages } from '../src/business/groupUpdates';
 import { startDashboard } from '../src/dashboard/dashboard';
+import { GroupUpdatesScheduler } from '../src/scheduler/groupUpdates';
 
 const TODAY = '2026-07-14';
 
@@ -31,11 +32,17 @@ beforeEach(async () => {
               VALUES (1, 1, 4, 1950, 487.5, 'PENDING', 1950)`).run();
   db.prepare(`INSERT INTO deliveries (cycle_id, seq, planned_date, status) VALUES (1, 1, ?, 'PLANNED')`).run(TODAY);
 
+  const scheduler = new GroupUpdatesScheduler({ db, delSheetDir: './data', today: () => TODAY });
   server = startDashboard({
     db,
     answer: async question => `echo: ${question}`,
     port: 0, // ephemeral
-    today: () => TODAY
+    today: () => TODAY,
+    inputMode: 'dashboard',
+    manualUpdates: {
+      stage: text => insertGroupMessage(db, 'dashboard', text, '2026-07-14T10:00:00.000Z'),
+      apply: () => scheduler.runOnce()
+    }
   });
   await new Promise<void>(resolve => server.on('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -95,10 +102,30 @@ describe('owner dashboard', () => {
   it('exposes health and review escalation fields', async () => {
     const health = await request('GET', '/api/health');
     expect(health.status).toBe(200);
+    expect(health.json).toMatchObject({ inputMode: 'dashboard', whatsappRequired: false, ok: true });
     expect(health.json).toHaveProperty('whatsappConnected');
     expect(health.json).toHaveProperty('linked');
     expect(health.json).toHaveProperty('phoneNumber');
     expect(String(await request('GET', '/').then(r => r.json))).toContain('status-banner');
   });
-});
 
+  it('accepts, applies, and clears a pasted update without WhatsApp', async () => {
+    const staged = await request('POST', '/api/updates', { text: 'Hold Dash Customer payment not received' });
+    expect(staged.status).toBe(201);
+    expect(staged.json.staged).toBe(true);
+    expect((await request('GET', '/api/overview')).json.stagedUpdates).toBe(1);
+
+    const applied = await request('POST', '/api/updates/apply');
+    expect(applied.status).toBe(200);
+    expect(applied.json.processed).toBe(1);
+    expect(applied.json.summary).toContain('1 message(s)');
+    expect((db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '500'`).get() as { status: string }).status)
+      .toBe('HOLD');
+    expect((await request('GET', '/api/overview')).json.stagedUpdates).toBe(0);
+  });
+
+  it('rejects empty or oversized pasted updates', async () => {
+    expect((await request('POST', '/api/updates', { text: '  ' })).status).toBe(400);
+    expect((await request('POST', '/api/updates', { text: 'x'.repeat(12001) })).status).toBe(400);
+  });
+});

@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { WhatsAppBot } from './bot/whatsapp';
+import { DashboardMessageSender } from './bot/dashboardSender';
 import { TwilioWhatsAppBot } from './bot/twilioWhatsApp';
 import { CloudApiWhatsAppBot } from './bot/cloudApiWhatsApp';
 import { MessageSender } from './bot/messageSender';
@@ -21,6 +22,7 @@ import { createServer, VoiceComponents, PaymentComponents } from './server';
 import { openDb } from './business/db';
 import { BusinessMessageHandler } from './business/businessHandler';
 import { GroupAssistant } from './business/groupAssistant';
+import { insertGroupMessage } from './business/groupUpdates';
 import { GroupUpdatesScheduler } from './scheduler/groupUpdates';
 import { createCloudProvider } from './llm/provider';
 import { startDashboard } from './dashboard/dashboard';
@@ -80,6 +82,11 @@ function requireEnv(mode: BotMode, names: string[]): string[] {
   return names.map(name => process.env[name]!);
 }
 
+function envFlag(name: string): boolean {
+  const value = (process.env[name] || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
 /**
  * The business mode runs the real subscription operation: the customer-care
  * WhatsApp number (Baileys QR by default; Twilio or Cloud API via
@@ -87,7 +94,7 @@ function requireEnv(mode: BotMode, names: string[]): string[] {
  * wired to the SQLite datastore — instruction intake for customers, ops
  * commands for staff. The generic bot's Excel/Sheets stack stays untouched.
  */
-async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaClient: OllamaClient): Promise<void> {
+async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaClient?: OllamaClient): Promise<void> {
   const releaseLock = acquireBusinessLock('./data');
   const dbPath = process.env.BUSINESS_DB || './data/business.db';
   const db = openDb(dbPath);
@@ -101,13 +108,15 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
   }
   logger.info({ dbPath, ...counts }, '✓ Business datastore ready');
 
-  const transport = (process.env.BUSINESS_TRANSPORT || 'baileys').toLowerCase();
+  const transport = (process.env.BUSINESS_TRANSPORT || 'dashboard').toLowerCase();
+  const dashboardMode = transport === 'dashboard' || transport === 'manual';
+  const updatesGroupJid = (process.env.UPDATES_GROUP_JID || '').trim() || undefined;
   let bot: MessageSender & { disconnect(): Promise<void> };
   let baileysBotRef: WhatsAppBot | null = null;
   let server: ReturnType<typeof createServer> | null = null;
   let groupScheduler: GroupUpdatesScheduler | undefined;
 
-  if (!(process.env.UPDATES_GROUP_JID || '').trim()) {
+  if (!dashboardMode && transport === 'baileys' && !updatesGroupJid) {
     logger.warn('UPDATES_GROUP_JID is not set — Updates group ingestion will be inactive until you add it to .env');
     console.warn('\n⚠️  UPDATES_GROUP_JID is empty. The bot will not read the Updates group until you set it.\n');
   }
@@ -126,7 +135,10 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     staff: config.whatsapp.owners
   });
 
-  if (transport === 'cloud') {
+  if (dashboardMode) {
+    bot = new DashboardMessageSender();
+    logger.info('Dashboard-first mode selected - WhatsApp is optional and will not start');
+  } else if (transport === 'cloud') {
     const [phoneNumberId, accessToken, verifyToken, appSecret] = requireEnv('business', [
       'WHATSAPP_CLOUD_PHONE_NUMBER_ID',
       'WHATSAPP_CLOUD_ACCESS_TOKEN',
@@ -147,7 +159,6 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     bot = twilioBot;
     server = createServer({ messageHandler: buildHandler(twilioBot), twilioAuthToken: token }, parseInt(process.env.WEBHOOK_PORT || '3000'));
   } else {
-    const updatesGroupJid = process.env.UPDATES_GROUP_JID || undefined;
     const baileysBot = new WhatsAppBot(
       config.whatsapp.sessionPath,
       config.whatsapp.reconnectDelay,
@@ -198,6 +209,25 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
     // while the phone is still pairing.
   }
 
+  // The operations engine can run without a messaging transport. This keeps
+  // auto-renewal, review escalation, and next-day sheet generation alive in
+  // dashboard-first mode, and also gives WhatsApp modes a safe manual intake
+  // fallback if their group connection is unavailable.
+  if (!groupScheduler) {
+    const schedulerOwnerDm = (process.env.OWNER_SHEET_DM || '0').trim() === '1' ||
+      (process.env.OWNER_SHEET_DM || '').trim().toLowerCase() === 'true';
+    groupScheduler = new GroupUpdatesScheduler({
+      db,
+      sender: dashboardMode || transport !== 'baileys' ? undefined : bot,
+      groupJid: dashboardMode || transport !== 'baileys' ? undefined : updatesGroupJid,
+      ollama: ollamaClient,
+      delSheetDir: './data',
+      processTime: process.env.UPDATES_PROCESS_TIME,
+      ownerDm: schedulerOwnerDm ? config.whatsapp.owners : []
+    });
+    groupScheduler.start();
+  }
+
   // Local owner dashboard (127.0.0.1 only). DASHBOARD_PORT=0 disables it.
   const dashboardPort = parseInt(process.env.DASHBOARD_PORT || '8787');
   let dashboardServer: ReturnType<typeof startDashboard> | null = null;
@@ -218,11 +248,18 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
       port: dashboardPort,
       delSheetDir: './data',
       sessionPath: config.whatsapp.sessionPath,
-      updatesGroupJid: process.env.UPDATES_GROUP_JID || null,
+      updatesGroupJid: transport === 'baileys' ? updatesGroupJid || null : null,
       getWhatsAppHealth: () => baileysBotRef?.getHealth() ?? null,
+      inputMode: dashboardMode ? 'dashboard' : 'whatsapp',
+      manualUpdates: {
+        stage: text => insertGroupMessage(db, 'dashboard', text, new Date().toISOString()),
+        apply: () => groupScheduler!.runOnce()
+      },
       qaMode: cloudProvider
         ? `Cloud AI (${cloudProvider.name}) with read-only tools`
-        : 'Local read-only tools + Ollama fallback'
+        : ollamaClient
+          ? 'Local read-only tools + optional Ollama fallback'
+          : 'Local read-only tools (no Ollama required)'
     });
   }
 
@@ -249,10 +286,17 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
   console.log('\n=====================================================');
   console.log('🌸 Mode: business (the real subscription operation)');
   console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
-  console.log(`📱 Transport: ${transport}`);
-  console.log(`📄 Nightly sheet: Updates group + dashboard${sheetDmOn ? ` + owner DM (${config.whatsapp.owners.join(', ') || 'none'})` : ' (personal DMs OFF)'}`);
-  console.log('📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
-  console.log(`🧠 Owner Q&A: ${cloudProvider ? `cloud (${cloudProvider.name}) with read-only tools` : 'local Ollama + deterministic fallback'}`);
+  console.log(`📱 Transport: ${dashboardMode ? 'dashboard (WhatsApp optional)' : transport}`);
+  console.log(`📄 Nightly sheet: dashboard${!dashboardMode && updatesGroupJid ? ' + Updates group' : ''}${sheetDmOn ? ` + owner DM (${config.whatsapp.owners.join(', ') || 'none'})` : ' (personal DMs OFF)'}`);
+  console.log(dashboardMode
+    ? '📥 Updates: paste on dashboard, apply explicitly, then download the sheet'
+    : '📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
+  const qaDescription = cloudProvider
+    ? `cloud (${cloudProvider.name}) with read-only tools`
+    : ollamaClient
+      ? 'local read-only tools + optional Ollama fallback'
+      : 'local read-only tools + deterministic fallback';
+  console.log(`🧠 Owner Q&A: ${qaDescription}`);
   console.log(`🖥️ Dashboard: ${dashboardServer ? `http://localhost:${dashboardPort}` : 'disabled (DASHBOARD_PORT=0)'}`);
   console.log('=====================================================\n');
 
@@ -280,23 +324,26 @@ async function main() {
     const config = loadConfig();
     ensureDirectories(config);
 
-    // Ollama is shared by every mode. The bot still works without it —
-    // classification falls back to regex and canned replies — so warn only.
-    logger.info({ endpoint: config.ollama.endpoint, model: config.ollama.model }, 'Initializing Ollama client');
-    const ollamaClient = new OllamaClient(
-      config.ollama.endpoint,
-      config.ollama.model,
-      config.ollama.timeout
-    );
+    // The real business path does not need a local model. Keep Ollama out of
+    // the process entirely unless a legacy mode or an explicit business opt-in
+    // asks for it; this also makes startup independent of a second service.
+    const useOllama = mode !== 'business' || envFlag('BUSINESS_USE_OLLAMA');
+    const ollamaClient = useOllama
+      ? new OllamaClient(config.ollama.endpoint, config.ollama.model, config.ollama.timeout)
+      : undefined;
 
-    const ollamaHealthy = await ollamaClient.checkHealth();
-    if (ollamaHealthy) {
-      logger.info('✓ Ollama is healthy');
-      // Fire-and-forget: load the model now, while RAM is most likely free
-      // (see OLLAMA_KEEP_ALIVE in .env), without delaying startup.
-      void ollamaClient.warmUp();
+    if (ollamaClient) {
+      logger.info({ endpoint: config.ollama.endpoint, model: config.ollama.model }, 'Initializing Ollama client');
+      if (await ollamaClient.checkHealth()) {
+        logger.info('✓ Ollama is healthy');
+        // Fire-and-forget: load the model now, while RAM is most likely free
+        // (see OLLAMA_KEEP_ALIVE in .env), without delaying startup.
+        void ollamaClient.warmUp();
+      } else {
+        logger.warn(`Ollama not responding - will use deterministic fallbacks. Run: ollama pull ${config.ollama.model}`);
+      }
     } else {
-      logger.warn(`Ollama not responding - will use fallback classification. Run: ollama pull ${config.ollama.model}`);
+      logger.info('Business mode: Ollama disabled; deterministic rules and read-only tools are active');
     }
 
     if (mode === 'business') {
@@ -412,10 +459,10 @@ async function main() {
     // Orders end in a Razorpay payment link in enhanced mode, direct confirm otherwise
     const fulfillment: OrderFulfillment = razorpayClient
       ? new PaymentLinkFulfillment(dataStore, razorpayClient, notifier)
-      : new DirectOrderFulfillment(dataStore, ollamaClient, notifier);
+      : new DirectOrderFulfillment(dataStore, ollamaClient!, notifier);
 
     const summaryGenerator = new DailySummaryGenerator(
-      ollamaClient,
+      ollamaClient!,
       dataStore,
       whatsappBot,
       config.whatsapp.owners,
@@ -442,7 +489,7 @@ async function main() {
     });
 
     const messageHandler = new MessageHandler({
-      ollamaClient,
+      ollamaClient: ollamaClient!,
       dataStore,
       notifier,
       fulfillment,

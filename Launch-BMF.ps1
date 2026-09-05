@@ -37,14 +37,14 @@ function Show-StartingDialog([scriptblock]$WaitLoop) {
   $label.AutoSize = $false
   $label.Size = New-Object System.Drawing.Size(380, 50)
   $label.Location = New-Object System.Drawing.Point(20, 24)
-  $label.Text = 'Starting the bot…'
+  $label.Text = 'Starting the bot...'
   $form.Controls.Add($label)
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 1000
   $script:waitSec = 0
   $timer.Add_Tick({
     $script:waitSec++
-    $label.Text = "Starting the bot… ($script:waitSec s)`nPlease wait — first launch can take up to a minute."
+    $label.Text = "Starting the bot... ($script:waitSec s)`nPlease wait - first launch can take up to a minute."
     if (& $WaitLoop) {
       $timer.Stop()
       $form.Close()
@@ -71,21 +71,30 @@ function Find-BrowserApp {
 
 $port = Read-EnvValue 'DASHBOARD_PORT' '8787'
 if ($port -eq '0') {
-  Show-Error "DASHBOARD_PORT=0 — the dashboard is disabled in .env.`n`nSet DASHBOARD_PORT=8787 and restart the bot."
+  Show-Error "DASHBOARD_PORT=0 - the dashboard is disabled in .env.`n`nSet DASHBOARD_PORT=8787 and restart the bot."
   exit 1
 }
 $DashboardUrl = "http://127.0.0.1:$port"
 $OverviewUrl = "$DashboardUrl/api/overview"
+$HealthUrl = "$DashboardUrl/api/health"
+$transport = Read-EnvValue 'BUSINESS_TRANSPORT' 'dashboard'
+$dashboardMode = $transport -in @('dashboard', 'manual')
 $linked = Test-Path (Join-Path $Root 'sessions\creds.json')
-$openPath = if ($linked) { $DashboardUrl } else { "$DashboardUrl/link" }
+$openPath = if ($dashboardMode -or $linked) { $DashboardUrl } else { "$DashboardUrl/link" }
 
 # Start the scheduled task if registered; otherwise start run-bot.ps1 in background.
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($task) {
   Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 } else {
-  $botRunning = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-    Where-Object { $_.CommandLine -match 'index\.(ts|js)\s+business|dist[\\/]index\.js\s+business' }
+  # Process command-line enumeration can be denied by Windows. A local health
+  # probe is enough to avoid starting a second copy; run-bot.ps1 also checks
+  # the app lock file before launching.
+  $botRunning = $false
+  try {
+    Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 2 | Out-Null
+    $botRunning = $true
+  } catch {}
   if (-not $botRunning) {
     Start-Process powershell -ArgumentList '-NoProfile', '-WindowStyle', 'Hidden', '-File', (Join-Path $Root 'run-bot.ps1') -WorkingDirectory $Root
   }

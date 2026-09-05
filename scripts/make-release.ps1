@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $ProjectRoot
 
 Write-Host '==> Building production bundle'
-npm run build
+npm.cmd run build
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $stamp = Get-Date -Format 'yyyyMMdd'
@@ -54,10 +54,11 @@ foreach ($dir in @('data', 'sessions', 'logs', 'backups\whatsapp-session')) {
   '1. Install Node.js 18+ LTS from https://nodejs.org/',
   '2. Unzip this folder anywhere (Desktop is fine)',
   '3. Double-click Setup.bat',
-  '4. Edit .env - set UPDATES_GROUP_JID to your Updates WhatsApp group',
-  '5. Open Bring My Flowers from the Desktop and scan the QR on the Link page',
+  '4. Leave BUSINESS_TRANSPORT=dashboard in .env (the default)',
+  '5. Open Bring My Flowers from the Desktop',
   '',
-  'Day-to-day: use the Desktop shortcut. Sheets on the dashboard + nightly in Updates group.',
+  'Day-to-day: paste staff updates on Overview, apply them, and download the sheet.',
+  'WhatsApp is optional; use BUSINESS_TRANSPORT=baileys only for the legacy Updates group.',
   'Personal WhatsApp sheet DMs are OFF.',
   '',
   'Full guide: docs\OWNER-CONSOLE.md'

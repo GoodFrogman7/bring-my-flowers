@@ -112,8 +112,8 @@ export const ARCHITECTURE_HTML = `<!DOCTYPE html>
 <div class="wrap">
   <header>
     <div class="eyebrow">Bring My Flowers · Business mode · 2026</div>
-    <h1>From staff WhatsApp chaos to a local ops console</h1>
-    <p class="sub">What actually ships today for a Gurgaon flower-subscription shop (~50–80 daily deliveries, 16k-row master). Not the Twilio/Razorpay prototype — that lives in a separate mode.</p>
+    <h1>From WhatsApp dependency to a local ops console</h1>
+    <p class="sub">What actually ships today for a Gurgaon flower-subscription shop (~50–80 daily deliveries, 16k-row master). The owner can operate even when WhatsApp is unavailable.</p>
   </header>
 
   <div class="legend">
@@ -128,14 +128,14 @@ export const ARCHITECTURE_HTML = `<!DOCTYPE html>
       <div class="flow">
         <div class="node live">
           <span class="tag live">Live</span>
-          <h3>Staff Updates group (WhatsApp)</h3>
-          <p>Holds, resumes, one-offs posted in Hinglish. Bot stays quiet unless called: <em>Bot, …</em> or <em>Bot, send sheet</em>.</p>
+          <h3>Dashboard paste (primary)</h3>
+          <p>Paste the exact staff update, then click Apply. The existing WhatsApp Updates group remains an optional legacy intake.</p>
         </div>
         <div class="arrow">↓</div>
         <div class="node live">
           <span class="tag live">Live</span>
           <h3>Bot server (Node.js + TypeScript, local)</h3>
-          <p>Baileys WhatsApp Web. Stages every group message. Nightly cron (21:30 IST) parses &amp; applies updates.</p>
+          <p>Local Node.js + TypeScript. Stages every pasted/group message. Nightly cron (21:30 IST) parses &amp; applies updates.</p>
         </div>
         <div class="arrow">↓</div>
         <div class="node live">
@@ -153,7 +153,7 @@ export const ARCHITECTURE_HTML = `<!DOCTYPE html>
         <div class="node live">
           <span class="tag live">Live</span>
           <h3>Owner console (localhost:8787)</h3>
-          <p>Deliveries, pending payments, review queue, sheet download, WhatsApp QR, read-only AI Q&amp;A.</p>
+          <p>Paste/apply updates, deliveries, pending payments, review queue, sheet download, optional WhatsApp QR, read-only AI Q&amp;A.</p>
         </div>
       </div>
     </div>
@@ -197,7 +197,7 @@ export const ARCHITECTURE_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="metrics">
-    <div class="metric"><div class="val">331</div><div class="lbl">Automated tests</div></div>
+    <div class="metric"><div class="val">344</div><div class="lbl">Automated tests</div></div>
     <div class="metric"><div class="val">72/77</div><div class="lbl">Sheet shadow-test rows</div></div>
     <div class="metric"><div class="val">~16k</div><div class="lbl">Master workbook rows</div></div>
     <div class="metric"><div class="val">21:30</div><div class="lbl">Nightly IST cron</div></div>
@@ -206,7 +206,7 @@ export const ARCHITECTURE_HTML = `<!DOCTYPE html>
   <div class="footer-note">
     <strong>Honest scope:</strong> This is ops automation for a real subscription florist — not a generic e-commerce chatbot.
     The old architecture diagram showed customer-facing Twilio + Razorpay + Sheets. That code exists as a prototype.
-    What the owner uses daily is: <strong>group → SQLite → Excel sheet → local dashboard</strong>.
+    What the owner uses daily is: <strong>dashboard paste → SQLite → Excel sheet → local dashboard</strong>.
   </div>
 </div>
 </body>

@@ -1,7 +1,10 @@
 # Owner Console — Client Handoff
 
-Bring My Flowers on a Windows PC: always-on Updates-group bot + local owner console.
-**Personal WhatsApp sheet DMs are OFF by default.** Sheets live on the dashboard **and** post to the Updates group nightly.
+Bring My Flowers on a Windows PC: an always-on local owner console for the
+flower operation. The recommended mode does not depend on WhatsApp.
+**Personal WhatsApp sheet DMs are OFF by default.** Sheets live on the dashboard;
+the legacy WhatsApp group is optional.
+The business workflow does not require Ollama or any cloud AI key; those are optional fallbacks for unusual questions.
 
 ## What you (the deliverer) do
 
@@ -19,10 +22,9 @@ Optional: fill Anthropic / Claude keys on the owner's machine later in `.env`.
 1. Install **Node.js 18+ LTS** from https://nodejs.org/
 2. Unzip the folder anywhere (Desktop is fine — path no longer must be `C:\bring_my_flowers`)
 3. Double-click **`Setup.bat`**
-4. Edit `.env` — set **`UPDATES_GROUP_JID`** to the Updates group (`...@g.us`)
+4. Leave `BUSINESS_TRANSPORT=dashboard` in `.env` (the default). No group ID,
+   QR scan, Ollama, or cloud account is needed.
 5. Double-click **Bring My Flowers** on the Desktop
-6. If prompted, open the **Link** page and scan the QR  
-   (WhatsApp → Linked Devices → Link a Device)
 
 Daily use: Desktop shortcut only. No terminal required.
 
@@ -30,25 +32,37 @@ Daily use: Desktop shortcut only. No terminal required.
 
 | Need | Where |
 |------|--------|
-| Tomorrow's sheet | Home → Download, or Deliveries tab (also in Updates group nightly) |
+| Tomorrow's sheet | Home → Download, or Deliveries tab |
 | Who owes money | Money → Pending payments |
-| Unclear group messages | Review tab (shows why + what to do) |
+| Unclear updates | Review tab (shows why + what to do) |
+| Staff update | Overview → paste exact message → **Apply this update** |
 | Ask a question | Ask the bot (Anthropic if configured) |
-| WhatsApp status | Red/green banner at top of every page |
-| Link / replace phone | Settings tab or `/link` |
+| WhatsApp status | Optional; it does not block dashboard mode |
 
-### WhatsApp rules (important)
+The owner does not need to open a terminal after setup. The simple daily loop is:
+
+1. Paste any staff update into Overview and click **Apply this update**.
+2. Check **Review** only if the app says something was unclear.
+3. Click **Download tomorrow's sheet**.
+
+The nightly job is a backup: it renews eligible subscriptions, flags dormant
+ones, and prepares the next sheet even if WhatsApp is off or broken.
+
+### Optional WhatsApp mode
 
 | Event | What happens |
 |-------|----------------|
-| Nightly job (21:30 IST) | Applies staged Updates, writes sheet for dashboard, **posts .xlsx to Updates group** |
+| Nightly job (21:30 IST) | Applies staged updates and writes the next sheet; group posting happens only in legacy Baileys mode |
 | Staff says `Bot, …` / `Flower Bot,` / `BMF,` | Bot answers in the group |
 | Staff says `Bot, send sheet` | On-demand sheet (applies pending updates first) |
 | Personal DMs of the sheet | **Off** (`OWNER_SHEET_DM=0`) |
 
-Optional: `OWNER_SHEET_DM=1` re-enables personal sheet DMs (not recommended). `GROUP_SHEET_SEND=0` stops nightly group uploads.
+To keep the existing group, set `BUSINESS_TRANSPORT=baileys` and
+`UPDATES_GROUP_JID=<group JID>`, then scan the QR on `/link`. Dashboard paste/apply
+still works as a fallback. `OWNER_SHEET_DM=1` re-enables personal sheet DMs (not
+recommended). `GROUP_SHEET_SEND=0` stops nightly group uploads.
 
-## Switch business phone later
+## Switch business phone later (only if using legacy WhatsApp mode)
 
 1. `Stop-ScheduledTask -TaskName BringMyFlowersBot`
 2. On the old phone: Linked Devices → log out this device
@@ -59,9 +73,9 @@ Optional: `OWNER_SHEET_DM=1` re-enables personal sheet DMs (not recommended). `G
 
 | Banner / symptom | Meaning | Fix |
 |------------------|---------|-----|
-| WhatsApp not linked | No `sessions/creds.json` | Open `/link` or Settings → scan QR |
-| WhatsApp offline | Connection dropped | Wait 1–2 min; bot auto-restarts. If stuck, reopen shortcut |
-| UPDATES_GROUP_JID missing | `.env` incomplete | Paste group JID, restart bot |
+| WhatsApp not linked | Legacy Baileys mode is selected | Switch to `BUSINESS_TRANSPORT=dashboard`, or open `/link` and scan QR |
+| WhatsApp offline | Legacy group adapter is down | Use Overview → paste update; the dashboard still works |
+| UPDATES_GROUP_JID missing | Legacy Baileys mode is selected | Add the group JID, or use dashboard mode |
 | Port busy | Second copy running | Close other Bring My Flowers / Node processes |
 | Sheet download failed | Excel file open / disk | Close the open sheet, retry |
 
@@ -73,5 +87,5 @@ Logs: `logs\launcher.log`, `logs\app.log`
 |------|---------|
 | `Setup.bat` | One-time install |
 | `Launch-BMF.bat` / Desktop shortcut | Daily app |
-| `.env` | Group JID + optional Anthropic key |
+| `.env` | Transport choice + optional Anthropic key |
 | `docs/OWNER-CONSOLE.md` | This guide |

@@ -13,6 +13,10 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40;700&display=swap" rel="stylesheet">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BMF">
 <title>Bring My Flowers — Owner Console</title>
 <style>
   :root {
@@ -297,6 +301,19 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     padding: 12px 14px; border-radius: 0 12px 12px 0; margin: 12px 0; font-size: 13px;
   }
   .callout.gold { border-color: var(--gold); background: rgba(184,149,106,0.08); }
+  .manual-update-panel { margin-top: 20px; border-color: rgba(42,122,90,0.22); }
+  .manual-update-panel h2 { margin-top: 0; }
+  .manual-update-panel p { color: var(--ink-soft); margin: 0 0 12px; }
+  .manual-update-panel textarea {
+    width: 100%; min-height: 150px; resize: vertical; display: block;
+    font: 14px/1.5 var(--sans); color: var(--ink); background: var(--paper);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  .manual-update-panel textarea:focus { outline: 2px solid rgba(42,122,90,0.22); border-color: var(--ok); }
+  .manual-update-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .manual-update-status { min-height: 22px; color: var(--muted); font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+  .manual-update-status.ok { color: var(--ok); }
+  .manual-update-status.warn { color: var(--warn); }
   .qr-panel { text-align: center; }
   .qr-frame {
     margin: 14px auto; min-height: 240px; max-width: 260px;
@@ -335,7 +352,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
   <div class="topbar-pills">
     <span class="pill" id="pill-wa"><span class="dot"></span> WhatsApp</span>
-    <span class="pill ai" id="pill-ai">AI</span>
+    <span class="pill ai" id="pill-ai">Owner Q&amp;A</span>
     <span class="pill" id="today-label"></span>
   </div>
 </div>
@@ -380,6 +397,17 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <button class="action accent" id="download-sheet">Download tomorrow's sheet</button>
         <a class="action secondary" href="/architecture" target="_blank">System architecture</a>
       </div>
+      <div class="panel manual-update-panel hidden" id="manual-updates-panel">
+        <h2>Paste a staff update</h2>
+        <p id="manual-updates-help">If WhatsApp is unavailable, paste the exact staff message here. The same safe parser will apply clear updates and send anything uncertain to Review.</p>
+        <textarea id="manual-update-text" maxlength="12000" placeholder="Example: Hold Neeraj Rathore — payment not received"></textarea>
+        <div class="manual-update-actions">
+          <button class="action accent" type="button" id="apply-update">Apply this update</button>
+          <button class="action secondary" type="button" id="save-update">Save for later</button>
+          <button class="action secondary" type="button" id="apply-saved-updates">Apply saved updates</button>
+        </div>
+        <div class="manual-update-status" id="manual-update-status" aria-live="polite"></div>
+      </div>
     </section>
 
     <section id="tab-deliveries" class="hidden">
@@ -422,23 +450,23 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     <section id="tab-settings" class="hidden">
       <div class="settings-grid">
         <div>
-          <div class="panel settings-block">
-            <h3>How the WhatsApp bot works</h3>
-            <p>Listens only in the <strong>Updates</strong> group. Personal chats ignored.</p>
-            <ul>
+          <div class="panel settings-block" id="input-help-block">
+            <h3 id="settings-how-title">How the WhatsApp bot works</h3>
+            <p id="settings-how-copy">Listens only in the <strong>Updates</strong> group. Personal chats ignored.</p>
+            <ul id="settings-how-list">
               <li>Staff posts are <strong>staged</strong> and applied overnight — no reply needed.</li>
               <li>Call the bot: <code>Bot,</code> / <code>Flower Bot,</code> / <code>BMF,</code> + question.</li>
               <li>Sheet in WhatsApp: <code>Bot, send sheet</code> only.</li>
             </ul>
-            <div class="callout">Nightly run posts the sheet to the Updates group and saves a copy here. Personal owner DMs stay off (OWNER_SHEET_DM=0).</div>
+            <div class="callout" id="settings-how-callout">Nightly run posts the sheet to the Updates group and saves a copy here. Personal owner DMs stay off (OWNER_SHEET_DM=0).</div>
           </div>
           <div class="panel settings-block">
-            <h3>Owner AI (read-only)</h3>
-            <p>Claude/OpenAI with database tools that cannot change orders or payments. Key stays in local <code>.env</code>.</p>
+            <h3>Owner questions (read-only)</h3>
+            <p>Common questions use local business data. Optional cloud or local AI can help with unusual questions, but nothing here can change orders or payments.</p>
           </div>
         </div>
         <div>
-          <div class="panel qr-panel settings-block">
+          <div class="panel qr-panel settings-block" id="whatsapp-settings-panel">
             <h3>Link or replace WhatsApp</h3>
             <div class="qr-frame" id="settings-qr"><p class="empty" style="padding:12px">Checking…</p></div>
             <div class="qr-status" id="settings-qr-status">Starting…</div>
@@ -505,6 +533,82 @@ async function getJson(url, options) {
   return response.json();
 }
 
+function setManualStatus(message, kind) {
+  const status = el('manual-update-status');
+  status.textContent = message;
+  status.className = 'manual-update-status' + (kind ? ' ' + kind : '');
+}
+
+function setManualButtons(disabled) {
+  ['apply-update', 'save-update', 'apply-saved-updates'].forEach(id => {
+    const button = el(id);
+    if (button) button.disabled = disabled;
+  });
+}
+
+function describeRun(result) {
+  const parts = [];
+  if (result.processed) parts.push(result.processed + ' update' + (result.processed === 1 ? '' : 's') + ' processed');
+  else parts.push('No new updates were waiting');
+  if (result.oneOffOrders) parts.push(result.oneOffOrders + ' order' + (result.oneOffOrders === 1 ? '' : 's') + ' added');
+  if (result.customerUpdates) parts.push(result.customerUpdates + ' subscription update' + (result.customerUpdates === 1 ? '' : 's'));
+  if (result.autoRenewed) parts.push(result.autoRenewed + ' subscription' + (result.autoRenewed === 1 ? '' : 's') + ' renewed');
+  if (result.escalated && result.escalated.length) parts.push(result.escalated.length + ' sent to Review');
+  return parts.join(' · ') + '. Tomorrow\\'s sheet is ready.';
+}
+
+async function applySavedUpdates() {
+  setManualButtons(true);
+  setManualStatus('Applying updates and preparing tomorrow\\'s sheet…');
+  try {
+    const result = await getJson('/api/updates/apply', { method: 'POST' });
+    setManualStatus(describeRun(result), result.escalated && result.escalated.length ? 'warn' : 'ok');
+    toast(result.escalated && result.escalated.length ? 'Applied — check Review' : 'Updates applied');
+    loadOverview();
+  } catch (error) {
+    setManualStatus(error.message || 'Could not apply updates.', 'warn');
+  } finally {
+    setManualButtons(false);
+  }
+}
+
+async function submitManualUpdate(applyNow) {
+  const input = el('manual-update-text');
+  const text = input.value.trim();
+  if (!text) {
+    setManualStatus('Paste a staff update first.', 'warn');
+    input.focus();
+    return;
+  }
+  setManualButtons(true);
+  setManualStatus(applyNow ? 'Saving and applying update…' : 'Saving update…');
+  try {
+    await getJson('/api/updates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    input.value = '';
+    if (applyNow) {
+      const result = await getJson('/api/updates/apply', { method: 'POST' });
+      setManualStatus(describeRun(result), result.escalated && result.escalated.length ? 'warn' : 'ok');
+      toast(result.escalated && result.escalated.length ? 'Applied — check Review' : 'Update applied');
+    } else {
+      setManualStatus('Saved. Apply it now or leave it for the nightly run.', 'ok');
+      toast('Update saved');
+    }
+    loadOverview();
+  } catch (error) {
+    setManualStatus(error.message || 'Could not save the update.', 'warn');
+  } finally {
+    setManualButtons(false);
+  }
+}
+
+el('apply-update').onclick = () => submitManualUpdate(true);
+el('save-update').onclick = () => submitManualUpdate(false);
+el('apply-saved-updates').onclick = applySavedUpdates;
+
 function table(headers, rows) {
   if (rows.length === 0) return '<div class="empty">Nothing here</div>';
   return '<table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' +
@@ -524,7 +628,24 @@ function zoneBars(byZone, dark) {
 function applyHealth(health) {
   const banner = el('status-banner');
   const waPill = el('pill-wa');
-  const aiPill = el('pill-ai');
+  if (health && health.whatsappRequired === false) {
+    waPill.className = 'pill ok';
+    waPill.innerHTML = '<span class="dot"></span> Dashboard mode';
+    banner.className = 'ok';
+    banner.style.display = 'block';
+    banner.textContent = 'Dashboard mode is active · WhatsApp is optional · Paste staff updates below';
+    const qrPanel = el('whatsapp-settings-panel');
+    if (qrPanel) qrPanel.classList.add('hidden');
+    const title = el('settings-how-title');
+    const copy = el('settings-how-copy');
+    const list = el('settings-how-list');
+    const callout = el('settings-how-callout');
+    if (title) title.textContent = 'Daily updates';
+    if (copy) copy.innerHTML = 'Use the dashboard as the single place to run the shop. WhatsApp can stay on the phone for normal conversations.';
+    if (list) list.innerHTML = '<li>Copy the exact staff update and paste it on Overview.</li><li>Click <strong>Apply this update</strong> for an immediate safe run.</li><li>Download tomorrow\\'s sheet when you are ready.</li>';
+    if (callout) callout.textContent = 'Clear instructions are applied automatically. Unclear ones stay in Review so a human can decide.';
+    return;
+  }
   if (health) {
     if (health.whatsappConnected && health.linked && health.updatesGroupConfigured) {
       waPill.className = 'pill ok';
@@ -566,6 +687,11 @@ async function refreshQr() {
   try {
     const health = await getJson('/api/health');
     applyHealth(health);
+    if (health.whatsappRequired === false) {
+      status.textContent = 'Not needed in dashboard mode';
+      frame.innerHTML = '<p class="empty" style="padding:16px;font-size:13px">WhatsApp is optional.<br>Use the Overview tab to paste staff updates.</p>';
+      return;
+    }
     if (health.whatsappConnected && health.linked) {
       const phone = health.phoneNumber ? String(health.phoneNumber) : '';
       status.textContent = phone ? ('Connected · ' + phone) : 'Connected';
@@ -593,9 +719,19 @@ async function loadOverview() {
   try {
     const data = await getJson('/api/overview');
     el('today-label').textContent = data.today.date;
-    el('pill-ai').textContent = (data.qaMode || 'AI')
-      .replace('Cloud AI (', '').replace(') with read-only tools', '').replace('anthropic', 'Claude');
+    const qaMode = data.qaMode || '';
+    el('pill-ai').textContent = qaMode.includes('Cloud AI')
+      ? 'Cloud Q&A'
+      : qaMode.includes('Ollama')
+        ? 'Local Q&A'
+        : 'Read-only Q&A';
     applyHealth(data.health);
+    const manualPanel = el('manual-updates-panel');
+    if (manualPanel) manualPanel.classList.toggle('hidden', !data.manualUpdatesEnabled);
+    const manualHelp = el('manual-updates-help');
+    if (manualHelp && data.inputMode === 'dashboard') {
+      manualHelp.textContent = 'Copy the exact staff message and paste it here. Clear updates apply safely; anything uncertain goes to Review for a human decision.';
+    }
     renderPulse(data);
     const accents = ['var(--brand)', 'var(--accent)', 'var(--gold)', 'var(--ok)', 'var(--accent-2)', 'var(--ink-soft)'];
     const icons = ['◆', '◇', '₹', '↻', '⚑', '◷'];
@@ -792,6 +928,79 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 3000);
+</script>
+</body>
+</html>`;
+
+export const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1714">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BMF">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<title>Sign in — Bring My Flowers</title>
+<style>
+  :root { --brand:#0f1714; --accent:#c45c6a; --muted:#7a8f86; --serif:"Instrument Serif", Georgia, serif; --sans:"DM Sans", system-ui, sans-serif; }
+  body {
+    margin: 0; min-height: 100vh; font-family: var(--sans); color: var(--brand);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: radial-gradient(ellipse at 20% 0%, rgba(196,92,106,0.1), transparent 50%), #f4f7f5;
+  }
+  .box {
+    background: #fff; border: 1px solid rgba(15,23,20,0.08); border-radius: 22px;
+    padding: 36px 32px; max-width: 360px; width: 100%; text-align: center; box-shadow: 0 32px 80px rgba(15,23,20,0.1);
+  }
+  h1 { font-family: var(--serif); font-size: 2rem; font-weight: 400; margin: 0 0 8px; }
+  p { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  input {
+    width: 100%; font: 16px/1.4 var(--sans); color: var(--brand); background: #f4f7f5;
+    border: 1px solid rgba(15,23,20,0.12); border-radius: 12px; padding: 14px 16px; box-sizing: border-box;
+  }
+  button {
+    width: 100%; margin-top: 12px; background: var(--brand); color: #f4faf7; border: none;
+    padding: 14px 20px; border-radius: 12px; font-weight: 600; font-size: 15px; cursor: pointer;
+  }
+  .error { color: var(--accent); font-size: 13px; min-height: 18px; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>Bring My Flowers</h1>
+    <p>Enter the console password to continue.</p>
+    <form id="login-form">
+      <input type="password" id="password" placeholder="Password" autofocus autocomplete="current-password">
+      <button type="submit">Sign in</button>
+      <div class="error" id="error"></div>
+    </form>
+  </div>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.getElementById('password').value;
+  const errorEl = document.getElementById('error');
+  errorEl.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    if (res.ok) {
+      location.href = '/';
+    } else {
+      errorEl.textContent = 'Wrong password.';
+    }
+  } catch {
+    errorEl.textContent = 'Could not reach the bot.';
+  }
+});
 </script>
 </body>
 </html>`;

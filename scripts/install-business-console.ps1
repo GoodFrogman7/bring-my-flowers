@@ -31,7 +31,7 @@ function Write-ConsoleStatus([hashtable]$Data) {
 
 Write-Step "Checking prerequisites"
 Require-Command 'node' "Install Node.js 18+ from https://nodejs.org/ then re-run Setup.bat."
-Require-Command 'npm' "npm should ship with Node.js — reinstall Node if missing."
+Require-Command 'npm.cmd' "npm should ship with Node.js - reinstall Node if missing."
 
 $nodeMajor = [int](node -v).TrimStart('v').Split('.')[0]
 if ($nodeMajor -lt 18) {
@@ -40,12 +40,7 @@ if ($nodeMajor -lt 18) {
 }
 Write-Host "Node $(node -v) OK"
 
-try {
-  Invoke-RestMethod http://localhost:11434/api/tags -TimeoutSec 2 | Out-Null
-  Write-Host "Ollama is running (optional)."
-} catch {
-  Write-Host "Ollama not detected — fine if Claude or local tools are configured."
-}
+Write-Host "Ollama is optional in business mode; setup will not install or start it."
 
 Write-Step "Preparing environment"
 New-Item -ItemType Directory -Force -Path 'logs', 'data', 'backups\whatsapp-session', 'sessions' | Out-Null
@@ -57,9 +52,9 @@ if (-not (Test-Path '.env')) {
   } else {
     Copy-Item '.env.example' '.env'
   }
-  Write-Host "Created .env — fill UPDATES_GROUP_JID before going live."
+  Write-Host "Created .env - dashboard mode is ready for use."
 } else {
-  Write-Host ".env already exists — keeping your settings."
+  Write-Host ".env already exists - keeping your settings."
 }
 
 function Ensure-EnvLine([string]$Key, [string]$Value) {
@@ -82,14 +77,15 @@ function Ensure-EnvLine([string]$Key, [string]$Value) {
   }
 }
 Ensure-EnvLine 'BOT_MODE' 'business'
+Ensure-EnvLine 'BUSINESS_TRANSPORT' 'dashboard'
 Ensure-EnvLine 'DASHBOARD_PORT' '8787'
 Ensure-EnvLine 'OWNER_SHEET_DM' '0'
 Ensure-EnvLine 'GROUP_SHEET_SEND' '1'
 
 Write-Step "Installing dependencies and building"
-npm install
+npm.cmd install
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-npm run build
+npm.cmd run build
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if (-not (Test-Path 'dist\index.js')) {
   Write-Host "Build did not produce dist\index.js" -ForegroundColor Red
@@ -104,7 +100,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-Write-Host "Scheduled task registered — bot starts automatically at Windows login."
+Write-Host "Scheduled task registered - bot starts automatically at Windows login."
 
 Write-Step "Creating shortcuts"
 $launcher = Join-Path $ProjectRoot 'Launch-BMF.bat'
@@ -142,19 +138,21 @@ foreach ($line in Get-Content '.env') {
   if ($line -match '^\s*UPDATES_GROUP_JID\s*=\s*(.+)$') { $envJid = $Matches[1].Trim() }
 }
 
-if (-not (Test-Path 'sessions\creds.json')) {
+if ((Get-Content '.env' | Where-Object { $_ -match '^\s*BUSINESS_TRANSPORT\s*=\s*(dashboard|manual)\s*$' }).Count -gt 0) {
+  Write-Host "Dashboard mode is ready - WhatsApp is optional."
+} elseif (-not (Test-Path 'sessions\creds.json')) {
   Write-Host ""
   Write-Host "WhatsApp is not linked yet." -ForegroundColor Yellow
   Write-Host "1. Double-click Bring My Flowers on the Desktop (or wait for the browser window)."
   Write-Host "2. Open the Link page and scan the QR with the business phone"
   Write-Host "   (WhatsApp > Linked Devices > Link a Device)."
 } else {
-  Write-Host "WhatsApp session found — bot should reconnect automatically."
+  Write-Host "WhatsApp session found - bot should reconnect automatically."
 }
 
-if (-not $envJid) {
+if (-not $envJid -and (Get-Content '.env' | Where-Object { $_ -match '^\s*BUSINESS_TRANSPORT\s*=\s*baileys\s*$' }).Count -gt 0) {
   Write-Host ""
-  Write-Host "UPDATES_GROUP_JID is empty in .env — set it to the Updates group JID." -ForegroundColor Yellow
+  Write-Host "UPDATES_GROUP_JID is empty in .env - set it to the Updates group JID." -ForegroundColor Yellow
 }
 
 Write-Host ""

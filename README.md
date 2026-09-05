@@ -12,7 +12,7 @@ One entry point (`src/index.ts`) runs in one of five modes:
 | `twilio` | Twilio API + webhook | Excel | Confirmed directly | — |
 | `cloud` | WhatsApp Business Cloud API + webhook | Excel | Confirmed directly | Template messages outside the 24-hour service window |
 | `enhanced` | Twilio API + webhook | Google Sheets | Razorpay payment link | Voice calls, Google Calendar, inventory alerts, EN/AR/HI/UR |
-| `business` | WhatsApp Web, Twilio, or Cloud API | SQLite | Subscription operation | The real flower-subscription business: instruction intake, delivery sheets, payment runs — see [docs/BUSINESS.md](docs/BUSINESS.md) |
+| `business` | Dashboard by default; WhatsApp optional | SQLite | Subscription operation | The real flower-subscription business: pasted/group updates, delivery sheets, payment runs — see [docs/BUSINESS.md](docs/BUSINESS.md) |
 
 Select the mode with a CLI argument or the `BOT_MODE` environment variable:
 
@@ -25,21 +25,35 @@ npm run start:enhanced     # node dist/index.js enhanced
 
 ## Quick start
 
+For the real flower-subscription operation and owner console:
+
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Install Ollama and pull the model (https://ollama.ai)
-ollama pull llama3
+# 2. Configure the business console
+#    Copy config/business.env.template to .env (dashboard mode needs no WhatsApp setup)
+cp config/business.env.template .env
 
-# 3. Configure
-#    Copy .env.example to .env and fill in what your mode needs
-#    (baileys mode needs nothing beyond OWNER_NUMBERS)
-
-# 4. Build and run
+# 3. Build and run
 npm run build
-npm start        # scan the QR code with WhatsApp > Linked Devices
+npm run start:business
 ```
+
+Business mode does not require Ollama: deterministic rules handle operational
+updates and the owner console uses read-only database tools. Set
+`BUSINESS_USE_OLLAMA=1` only if you explicitly want a local language-model
+fallback for unusual messages. The older generic customer-bot modes still use
+Ollama and are documented in [docs/SETUP.md](docs/SETUP.md).
+
+### Recommended simple path
+
+Business mode now defaults to `BUSINESS_TRANSPORT=dashboard`. The owner opens the
+local console, pastes the exact staff update, clicks **Apply this update**, and
+downloads tomorrow's Excel sheet. The same conservative parser and Review queue
+are used; WhatsApp is an optional legacy intake/notification adapter, not a
+startup requirement. Set `BUSINESS_TRANSPORT=baileys` only if the team still
+wants the bot watching the existing Updates group.
 
 For Twilio, Cloud API, and enhanced mode setup (webhooks, Google Cloud, Razorpay), see **[docs/SETUP.md](docs/SETUP.md)**.
 
@@ -131,7 +145,10 @@ Ollama.
 
 ### Owner Console (Windows app for your uncle)
 
-Sheets live on the **owner console** by default — personal DMs are **off**. The nightly `.xlsx` still posts to the **Updates group** for staff.
+Sheets live on the **owner console** by default — personal DMs are **off**. In
+dashboard mode, WhatsApp is optional and the nightly job only prepares the
+sheet on disk. If the legacy Baileys transport is enabled, the `.xlsx` can also
+post to the Updates group.
 
 **You:** package a zip for delivery:
 
@@ -139,9 +156,9 @@ Sheets live on the **owner console** by default — personal DMs are **off**. Th
 npm run make:release
 ```
 
-**Uncle:** unzip → `Setup.bat` → set `UPDATES_GROUP_JID` → Desktop **Bring My Flowers**.
+**Uncle:** unzip → `Setup.bat` → use the Desktop **Bring My Flowers** shortcut. No QR or group ID is needed in the recommended dashboard mode.
 
-- Dashboard: **http://localhost:8787** (Settings tab or `/link` for QR)
+- Dashboard: **http://localhost:8787** (Overview is the daily home)
 - Full handoff: [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)
 - `OWNER_SHEET_DM=1` only if you intentionally want nightly WhatsApp DMs to owner numbers
 - `GROUP_SHEET_SEND=0` stops nightly group sheet upload

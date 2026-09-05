@@ -138,9 +138,11 @@ The live-operation layer (`npm run start:business`, or `npm run dev:business`):
 - All business dates are computed in IST regardless of server timezone
   (`dates.ts`).
 
-Transport: Baileys by default — scan the QR with the **customer-care phone**
-and the bot answers on the number customers already use. `BUSINESS_TRANSPORT=twilio`
-or `BUSINESS_TRANSPORT=cloud` switches to the corresponding webhook path.
+Transport: dashboard by default — paste staff updates into the local owner
+console and keep WhatsApp out of the critical path. Set
+`BUSINESS_TRANSPORT=baileys` only for the optional existing Updates-group
+adapter; `BUSINESS_TRANSPORT=twilio` or `BUSINESS_TRANSPORT=cloud` are separate
+webhook deployments.
 `BUSINESS_DB` overrides the datastore path.
 
 ## Phase C implementation (done)
@@ -181,8 +183,14 @@ card; if he prefers his combo style, the recipes need a second per-week shape.
 ## Owner dashboard and smart Q&A (2026-07)
 
 Business mode ships a **local owner console** at `http://localhost:8787` (same
-machine as the bot): Home / Deliveries / Money / Review / Ask the bot / Settings
-(with bot instructions and WhatsApp QR for linking or replacing the number).
+machine as the bot): Home / Deliveries / Money / Review / Ask the bot / Settings.
+In the recommended dashboard mode, the Overview tab is the daily intake: paste
+the exact staff update, apply it, review exceptions, and download the next sheet.
+WhatsApp QR/settings are shown only for the optional legacy adapter.
+
+**Dashboard-first safety rule:** WhatsApp is an input and notification convenience,
+not the source of truth. If it is disconnected, the owner can still apply
+updates, run the renewal/review engine, and generate the Excel delivery sheet.
 
 **WhatsApp group rules (Updates group only):**
 
