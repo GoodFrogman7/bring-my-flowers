@@ -28,3 +28,7 @@ desktop.ini
 *.db-*
 release/
 data/*.lock
+
+# Local runtime state and machine-local Claude settings
+sandbox/
+.claude/settings.local.json
