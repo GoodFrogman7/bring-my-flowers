@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { openDb, BusinessDb } from '../src/business/db';
 import { routeGroupMessage, fallbackAnswer, buildBusinessSnapshot, GroupAssistant } from '../src/business/groupAssistant';
 import { MessageSender } from '../src/bot/messageSender';
@@ -18,9 +21,17 @@ function seed() {
   db.prepare(`INSERT INTO deliveries (cycle_id, seq, planned_date, status) VALUES (1, 2, ?, 'PLANNED')`).run(TOMORROW);
 }
 
+let sheetDir: string;
+
 beforeEach(() => {
   db = openDb(':memory:');
   seed();
+  sheetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bmf-assistant-'));
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(sheetDir, { recursive: true, force: true });
 });
 
 describe('routeGroupMessage', () => {
@@ -107,7 +118,8 @@ describe('GroupAssistant.handle', () => {
     };
   }
 
-  it('stages updates silently and answers questions in the group', async () => {
+  it('stages updates silently and answers questions in the group (legacy, GROUP_SILENT=0)', async () => {
+    vi.stubEnv('GROUP_SILENT', '0');
     const sent: Array<{ to: string; message: string }> = [];
     const assistant = new GroupAssistant({
       db, sender: fakeSender(sent, []), groupJid: 'g@g.us', today: () => TODAY
@@ -150,12 +162,43 @@ describe('GroupAssistant.handle', () => {
     });
   });
 
-  it('processes staged updates then sends the sheet as a document', async () => {
+  it('never posts in the group when silent (default): questions, sheet requests and updates', async () => {
     const sent: Array<{ to: string; message: string }> = [];
     const docs: Array<{ to: string; filePath: string }> = [];
     const assistant = new GroupAssistant({
       db, sender: fakeSender(sent, docs), groupJid: 'g@g.us',
-      delSheetDir: './data', today: () => TODAY
+      delSheetDir: sheetDir, today: () => TODAY
+    });
+
+    await assistant.handle('919999999999', 'Hold Neeraj Rathore is payment not received');
+    await assistant.handle('919999999999', 'Bot, how many deliveries today?');
+    await assistant.handle('919999999999', 'Bot, send sheet for today');
+
+    expect(sent).toHaveLength(0);
+    expect(docs).toHaveLength(0);
+    expect(fs.readdirSync(sheetDir)).toHaveLength(0);
+
+    // Every message is kept; only the operational update awaits the nightly run.
+    const rows = db.prepare(`SELECT message_text, processed_at FROM group_messages ORDER BY id`).all() as
+      Array<{ message_text: string; processed_at: string | null }>;
+    expect(rows.map(row => row.message_text)).toEqual([
+      'Hold Neeraj Rathore is payment not received',
+      'Bot, how many deliveries today?',
+      'Bot, send sheet for today'
+    ]);
+    expect(rows.map(row => row.processed_at === null)).toEqual([true, false, false]);
+    // The sheet request did not apply the staged hold.
+    const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;
+    expect(status).toBe('ACTIVE');
+  });
+
+  it('processes staged updates then sends the sheet as a document (legacy, GROUP_SILENT=0)', async () => {
+    vi.stubEnv('GROUP_SILENT', '0');
+    const sent: Array<{ to: string; message: string }> = [];
+    const docs: Array<{ to: string; filePath: string }> = [];
+    const assistant = new GroupAssistant({
+      db, sender: fakeSender(sent, docs), groupJid: 'g@g.us',
+      delSheetDir: sheetDir, today: () => TODAY
     });
 
     await assistant.handle('919999999999', 'Hold Neeraj Rathore is payment not received');

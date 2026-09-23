@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { openDb, BusinessDb } from '../src/business/db';
 import {
   extractPhone,
@@ -11,6 +13,7 @@ import {
 import { dueRows } from '../src/business/delSheet';
 import { GroupUpdatesScheduler, ownerSheetDmEnabled, groupSheetSendEnabled } from '../src/scheduler/groupUpdates';
 import { MessageSender } from '../src/bot/messageSender';
+import { groupSilentEnabled } from '../src/bot/groupSilence';
 
 const TODAY = '2026-07-06'; // Monday
 const TOMORROW = '2026-07-07';
@@ -233,96 +236,112 @@ Do not ask for payment`;
 });
 
 describe('GroupUpdatesScheduler.runOnce', () => {
-  it('defaults: group sheet on, owner DM off', () => {
-    const env = { ...process.env };
-    delete env.OWNER_SHEET_DM;
-    delete env.GROUP_SHEET_SEND;
-    expect(ownerSheetDmEnabled(env)).toBe(false);
-    expect(groupSheetSendEnabled(env)).toBe(true);
+  let sheetDir: string;
+
+  beforeEach(() => {
+    sheetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bmf-scheduler-'));
+    // Start from a clean slate regardless of the developer's own .env.
+    for (const key of ['GROUP_SILENT', 'GROUP_SHEET_SEND', 'GROUP_NIGHTLY_SUMMARY', 'OWNER_SHEET_DM']) {
+      vi.stubEnv(key, undefined);
+    }
   });
 
-  it('posts sheet to the Updates group by default but never DMs the owner', async () => {
-    const prevDm = process.env.OWNER_SHEET_DM;
-    const prevGroup = process.env.GROUP_SHEET_SEND;
-    const prevSummary = process.env.GROUP_NIGHTLY_SUMMARY;
-    delete process.env.OWNER_SHEET_DM;
-    delete process.env.GROUP_SHEET_SEND;
-    delete process.env.GROUP_NIGHTLY_SUMMARY;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(sheetDir, { recursive: true, force: true });
+  });
 
-    const sent: Array<{ to: string; message: string }> = [];
-    const docs: Array<{ to: string; filePath: string }> = [];
-    const sender: MessageSender = {
+  function recordingSender(sent: Array<{ to: string; message: string }>, docs: Array<{ to: string; filePath: string }>): MessageSender {
+    return {
       async sendMessage(to, message) { sent.push({ to, message }); return true; },
       async sendMessageToMultiple() { /* not used */ },
       isConnected: () => true,
       async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
     };
+  }
+
+  it('defaults: silent, group sheet off, owner DM off', () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(groupSilentEnabled(env)).toBe(true);
+    expect(groupSheetSendEnabled(env)).toBe(false);
+    expect(ownerSheetDmEnabled(env)).toBe(false);
+  });
+
+  it('silent by default: applies updates and writes the sheet but posts nothing', async () => {
+    const sent: Array<{ to: string; message: string }> = [];
+    const docs: Array<{ to: string; filePath: string }> = [];
     insertGroupMessage(db, '919999999999', 'Hold Neeraj Rathore payment not received', '2026-07-06T10:00:00.000Z');
 
     const scheduler = new GroupUpdatesScheduler({
-      db, sender, groupJid: 'g@g.us', ownerDm: ['+919717173327'],
-      delSheetDir: './data', today: () => TODAY
+      db, sender: recordingSender(sent, docs), groupJid: 'g@g.us', ownerDm: ['+919717173327'],
+      delSheetDir: sheetDir, today: () => TODAY
     });
     await scheduler.runOnce();
 
     const status = (db.prepare(`SELECT status FROM subscriptions WHERE customer_id = '100'`).get() as { status: string }).status;
     expect(status).toBe('HOLD');
+    expect(fs.existsSync(path.join(sheetDir, `del-sheet-${TOMORROW}.xlsx`))).toBe(true);
+    expect(sent).toHaveLength(0);
+    expect(docs).toHaveLength(0);
+  });
+
+  it('GROUP_SILENT overrides GROUP_SHEET_SEND=1 and GROUP_NIGHTLY_SUMMARY=1', async () => {
+    vi.stubEnv('GROUP_SHEET_SEND', '1');
+    vi.stubEnv('GROUP_NIGHTLY_SUMMARY', '1');
+    const sent: Array<{ to: string; message: string }> = [];
+    const docs: Array<{ to: string; filePath: string }> = [];
+    insertGroupMessage(db, '919999999999', 'Hold Neeraj Rathore', '2026-07-06T10:00:00.000Z');
+
+    const scheduler = new GroupUpdatesScheduler({
+      db, sender: recordingSender(sent, docs), groupJid: 'g@g.us', delSheetDir: sheetDir, today: () => TODAY
+    });
+    await scheduler.runOnce();
+
+    expect(sent.filter(m => m.to === 'g@g.us')).toHaveLength(0);
+    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(0);
+  });
+
+  it('legacy (GROUP_SILENT=0): posts the sheet only when GROUP_SHEET_SEND=1, never DMs the owner', async () => {
+    vi.stubEnv('GROUP_SILENT', '0');
+    vi.stubEnv('GROUP_SHEET_SEND', '1');
+    const sent: Array<{ to: string; message: string }> = [];
+    const docs: Array<{ to: string; filePath: string }> = [];
+
+    const scheduler = new GroupUpdatesScheduler({
+      db, sender: recordingSender(sent, docs), groupJid: 'g@g.us', ownerDm: ['+919717173327'],
+      delSheetDir: sheetDir, today: () => TODAY
+    });
+    await scheduler.runOnce();
 
     expect(sent).toHaveLength(0);
     expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
     expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(0);
-    expect(fs.existsSync(`./data/del-sheet-${TOMORROW}.xlsx`)).toBe(true);
-
-    if (prevDm === undefined) delete process.env.OWNER_SHEET_DM; else process.env.OWNER_SHEET_DM = prevDm;
-    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
-    if (prevSummary === undefined) delete process.env.GROUP_NIGHTLY_SUMMARY; else process.env.GROUP_NIGHTLY_SUMMARY = prevSummary;
   });
 
-  it('skips the group sheet when GROUP_SHEET_SEND=0', async () => {
-    const prevGroup = process.env.GROUP_SHEET_SEND;
-    process.env.GROUP_SHEET_SEND = '0';
+  it('legacy (GROUP_SILENT=0): skips the group sheet when GROUP_SHEET_SEND is unset', async () => {
+    vi.stubEnv('GROUP_SILENT', '0');
     const docs: Array<{ to: string; filePath: string }> = [];
-    const sender: MessageSender = {
-      async sendMessage() { return true; },
-      async sendMessageToMultiple() { /* not used */ },
-      isConnected: () => true,
-      async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
-    };
 
     const scheduler = new GroupUpdatesScheduler({
-      db, sender, groupJid: 'g@g.us', delSheetDir: './data', today: () => TODAY
+      db, sender: recordingSender([], docs), groupJid: 'g@g.us', delSheetDir: sheetDir, today: () => TODAY
     });
     await scheduler.runOnce();
 
     expect(docs).toHaveLength(0);
-
-    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
   });
 
-  it('can still DM the sheet when OWNER_SHEET_DM=1 and GROUP_SHEET_SEND=1', async () => {
-    const prevDm = process.env.OWNER_SHEET_DM;
-    const prevGroup = process.env.GROUP_SHEET_SEND;
-    process.env.OWNER_SHEET_DM = '1';
-    process.env.GROUP_SHEET_SEND = '1';
+  it('owner DMs still work when OWNER_SHEET_DM=1 (personal chats are not groups)', async () => {
+    vi.stubEnv('OWNER_SHEET_DM', '1');
     const docs: Array<{ to: string; filePath: string }> = [];
-    const sender: MessageSender = {
-      async sendMessage() { return true; },
-      async sendMessageToMultiple() { /* not used */ },
-      isConnected: () => true,
-      async sendDocument(to, filePath) { docs.push({ to, filePath }); return true; }
-    };
 
     const scheduler = new GroupUpdatesScheduler({
-      db, sender, groupJid: 'g@g.us', ownerDm: ['+919717173327'],
-      delSheetDir: './data', today: () => TODAY
+      db, sender: recordingSender([], docs), groupJid: 'g@g.us', ownerDm: ['+919717173327'],
+      delSheetDir: sheetDir, today: () => TODAY
     });
     await scheduler.runOnce();
 
-    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(1);
+    expect(docs.filter(d => d.to === 'g@g.us')).toHaveLength(0);
     expect(docs.filter(d => d.to === '+919717173327')).toHaveLength(1);
-
-    if (prevDm === undefined) delete process.env.OWNER_SHEET_DM; else process.env.OWNER_SHEET_DM = prevDm;
-    if (prevGroup === undefined) delete process.env.GROUP_SHEET_SEND; else process.env.GROUP_SHEET_SEND = prevGroup;
   });
 });
 

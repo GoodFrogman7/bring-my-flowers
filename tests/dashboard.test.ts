@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as http from 'http';
 import { AddressInfo } from 'net';
 import { openDb, BusinessDb } from '../src/business/db';
@@ -11,6 +14,7 @@ const TODAY = '2026-07-14';
 let db: BusinessDb;
 let server: http.Server;
 let base: string;
+let sheetDir: string;
 
 async function request(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
   const response = await fetch(`${base}${path}`, {
@@ -32,9 +36,11 @@ beforeEach(async () => {
               VALUES (1, 1, 4, 1950, 487.5, 'PENDING', 1950)`).run();
   db.prepare(`INSERT INTO deliveries (cycle_id, seq, planned_date, status) VALUES (1, 1, ?, 'PLANNED')`).run(TODAY);
 
-  const scheduler = new GroupUpdatesScheduler({ db, delSheetDir: './data', today: () => TODAY });
+  sheetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bmf-dashboard-'));
+  const scheduler = new GroupUpdatesScheduler({ db, delSheetDir: sheetDir, today: () => TODAY });
   server = startDashboard({
     db,
+    delSheetDir: sheetDir,
     answer: async question => `echo: ${question}`,
     port: 0, // ephemeral
     today: () => TODAY,
@@ -51,9 +57,23 @@ beforeEach(async () => {
 afterEach(async () => {
   await new Promise<void>(resolve => server.close(() => resolve()));
   db.close();
+  fs.rmSync(sheetDir, { recursive: true, force: true });
 });
 
 describe('owner dashboard', () => {
+  it('reports silent group mode and when the last group message arrived', async () => {
+    const empty = await request('GET', '/api/health');
+    expect(empty.json.groupSilent).toBe(true);
+    expect(empty.json.lastGroupMessageAt).toBeNull();
+
+    // Pasted dashboard updates do not count as group traffic.
+    insertGroupMessage(db, 'dashboard', 'Hold Dash Customer', '2026-07-14T11:00:00.000Z');
+    insertGroupMessage(db, '919999999999', 'Hold Dash Customer', '2026-07-14T09:30:00.000Z');
+    insertGroupMessage(db, '918888888888', 'Pink lilies', '2026-07-14T10:15:00.000Z');
+    const health = await request('GET', '/api/health');
+    expect(health.json.lastGroupMessageAt).toBe('2026-07-14T10:15:00.000Z');
+  });
+
   it('serves the page and the overview numbers', async () => {
     const page = await request('GET', '/');
     expect(page.status).toBe(200);

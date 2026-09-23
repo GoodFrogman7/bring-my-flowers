@@ -129,3 +129,18 @@ Keep the existing WhatsApp group disconnected unless the staff specifically
 needs it. The next product decision is whether to add narrowly scoped payment
 and hold buttons after the review backlog is understood; do not add broad
 AI-driven mutation yet.
+
+## 2026-09-23: Phase 0 of the accuracy + Lily plan — silent group listener
+
+- New `GROUP_SILENT` setting (on by default, including for an existing `.env`
+  that does not mention it). The Baileys transport refuses every send to a
+  `@g.us` JID while it is on, so the nightly sheet, the nightly summary,
+  `Bot, send sheet`, and `Bot,` Q&A replies can no longer post in the group.
+  Every group message is still stored in `group_messages`; `Bot,` calls are
+  stored already marked processed so they do not land in Review.
+- `GROUP_SHEET_SEND` now defaults to off, and only matters with
+  `GROUP_SILENT=0`.
+- The console banner shows "last group message received N minutes ago" and,
+  when the WhatsApp link is down, says to paste updates on Overview instead.
+- Tests no longer write to `./data`; they use temporary directories.
+- Vitest: 26 files, 360 tests passed.

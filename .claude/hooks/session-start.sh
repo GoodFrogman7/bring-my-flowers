@@ -12,7 +12,7 @@ cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 npm ci --no-audit --no-fund
 
-# data/ is runtime state and never committed; several tests write sheets there.
+# data/ is runtime state and never committed; the empty DB below lives there.
 mkdir -p data
 
 # Business verification needs a .env; the template is dashboard-first and holds

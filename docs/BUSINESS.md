@@ -194,12 +194,13 @@ updates, run the renewal/review engine, and generate the Excel delivery sheet.
 
 **WhatsApp group rules (Updates group only):**
 
-- Every message is read and staged for the nightly parser.
-- The bot **only replies when called**: `Bot, …`, `Flower Bot, …`, or `BMF, …`.
-- `Bot, send sheet` is the only default way to get the `.xlsx` in WhatsApp.
-- Nightly run writes the sheet for the dashboard; it does **not** auto-post the
-  file (or summary) to WhatsApp unless `GROUP_SHEET_SEND` / `GROUP_NIGHTLY_SUMMARY`
-  are enabled.
+- Every message is read and stored for the nightly parser.
+- The bot is a **silent listener** (`GROUP_SILENT=1`, the default): it posts
+  nothing to any group — no answers, no sheet, no summary. `Bot, …` calls are
+  stored for the record but not answered; ask in the owner console instead.
+- Nightly run writes the sheet for the dashboard. Legacy group posting
+  (`GROUP_SHEET_SEND`, `GROUP_NIGHTLY_SUMMARY`, `Bot,` replies) only works with
+  `GROUP_SILENT=0`.
 - Personal chats are ignored. Owner sheet DMs stay off unless `OWNER_SHEET_DM=1`.
 
 **Answer quality (degradation chain, safest first):**

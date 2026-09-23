@@ -1,6 +1,7 @@
 import * as cron from 'node-cron';
 import { BusinessDb } from '../business/db';
 import { MessageSender } from '../bot/messageSender';
+import { groupSilentEnabled } from '../bot/groupSilence';
 import { OllamaClient } from '../llm/ollama';
 import { processGroupMessages, formatGroupSummary } from '../business/groupUpdates';
 import { writeDelSheetDetailed } from '../business/delSheet';
@@ -46,13 +47,13 @@ export function ownerSheetDmEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 /**
- * Auto-posting the .xlsx into the Updates group is on by default (staff pull
- * from the group; owner uses the dashboard). Set GROUP_SHEET_SEND=0 to disable.
+ * Auto-posting the .xlsx into the Updates group. Off by default: the owner
+ * downloads the sheet from the dashboard. GROUP_SHEET_SEND=1 only takes effect
+ * when GROUP_SILENT=0 as well.
  */
 export function groupSheetSendEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.GROUP_SHEET_SEND ?? '1').trim().toLowerCase();
-  if (raw === '0' || raw === 'false' || raw === 'no') return false;
-  return raw === '1' || raw === 'true' || raw === 'yes' || env.GROUP_SHEET_SEND === undefined;
+  const raw = (env.GROUP_SHEET_SEND || '0').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 /**
@@ -74,10 +75,9 @@ const TIMEZONE = 'Asia/Kolkata';
 
 /**
  * Nightly business job: apply staged staff messages, regenerate tomorrow's
- * delivery sheet on disk for the owner dashboard, and optionally post the
- * .xlsx to the Updates group. Personal owner DMs stay off unless
- * OWNER_SHEET_DM=1. On-demand "Bot, send sheet" is handled live by
- * GroupAssistant when the legacy WhatsApp adapter is enabled.
+ * delivery sheet on disk for the owner dashboard. Nothing is posted to the
+ * Updates group while GROUP_SILENT is on (the default). Personal owner DMs
+ * stay off unless OWNER_SHEET_DM=1.
  */
 export class GroupUpdatesScheduler {
   private job: cron.ScheduledTask | null = null;
@@ -127,13 +127,14 @@ export class GroupUpdatesScheduler {
     const caption = `Delivery sheet for ${tomorrow} — ${sheet.rows} rows, ${sheet.autoAssigned} auto-assigned` +
       (sheet.manual.length > 0 ? `, ${sheet.manual.length} manual (see Procurement tab)` : '');
 
-    const groupMessagingEnabled = Boolean(sender && groupJid);
+    // GROUP_SILENT (default on) overrides both group-posting flags.
+    const groupMessagingEnabled = Boolean(sender && groupJid) && !groupSilentEnabled();
 
-    if (sender && groupJid && groupNightlySummaryEnabled()) {
+    if (sender && groupJid && groupMessagingEnabled && groupNightlySummaryEnabled()) {
       await sender.sendMessage(groupJid, formatGroupSummary(result, today));
     }
 
-    if (sender && groupJid && groupSheetSendEnabled()) {
+    if (sender && groupJid && groupMessagingEnabled && groupSheetSendEnabled()) {
       if (sender.sendDocument) {
         const sent = await sender.sendDocument(groupJid, outPath, caption);
         if (!sent) await sender.sendMessage(groupJid, `${caption}\n(file send failed — saved at ${outPath})`);
