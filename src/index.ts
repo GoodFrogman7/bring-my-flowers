@@ -4,6 +4,7 @@ import { DashboardMessageSender } from './bot/dashboardSender';
 import { TwilioWhatsAppBot } from './bot/twilioWhatsApp';
 import { CloudApiWhatsAppBot } from './bot/cloudApiWhatsApp';
 import { MessageSender } from './bot/messageSender';
+import { groupSilentEnabled } from './bot/groupSilence';
 import { OllamaClient } from './llm/ollama';
 import { ExcelManager } from './data/excelManager';
 import { GoogleSheetsManager } from './data/googleSheetsManager';
@@ -23,7 +24,7 @@ import { openDb } from './business/db';
 import { BusinessMessageHandler } from './business/businessHandler';
 import { GroupAssistant } from './business/groupAssistant';
 import { insertGroupMessage } from './business/groupUpdates';
-import { GroupUpdatesScheduler } from './scheduler/groupUpdates';
+import { GroupUpdatesScheduler, groupSheetSendEnabled } from './scheduler/groupUpdates';
 import { createCloudProvider } from './llm/provider';
 import { startDashboard } from './dashboard/dashboard';
 import { acquireBusinessLock } from './utils/instanceLock';
@@ -287,10 +288,13 @@ async function startBusinessMode(config: ReturnType<typeof loadConfig>, ollamaCl
   console.log('🌸 Mode: business (the real subscription operation)');
   console.log(`💾 Datastore: ${dbPath} — ${counts.customers} customers, ${counts.active} active subscriptions`);
   console.log(`📱 Transport: ${dashboardMode ? 'dashboard (WhatsApp optional)' : transport}`);
-  console.log(`📄 Nightly sheet: dashboard${!dashboardMode && updatesGroupJid ? ' + Updates group' : ''}${sheetDmOn ? ` + owner DM (${config.whatsapp.owners.join(', ') || 'none'})` : ' (personal DMs OFF)'}`);
+  const groupSilent = groupSilentEnabled();
+  console.log(`📄 Nightly sheet: dashboard${!dashboardMode && updatesGroupJid && !groupSilent && groupSheetSendEnabled() ? ' + Updates group' : ''}${sheetDmOn ? ` + owner DM (${config.whatsapp.owners.join(', ') || 'none'})` : ' (personal DMs OFF)'}`);
   console.log(dashboardMode
     ? '📥 Updates: paste on dashboard, apply explicitly, then download the sheet'
-    : '📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
+    : groupSilent
+      ? '📱 Group bot: silent listener — stores every message, never posts (GROUP_SILENT=1)'
+      : '📱 Group bot: answers only when called (Bot, / Flower Bot, / BMF,)');
   const qaDescription = cloudProvider
     ? `cloud (${cloudProvider.name}) with read-only tools`
     : ollamaClient

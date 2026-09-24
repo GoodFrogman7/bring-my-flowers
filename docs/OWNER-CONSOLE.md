@@ -52,15 +52,20 @@ ones, and prepares the next sheet even if WhatsApp is off or broken.
 
 | Event | What happens |
 |-------|----------------|
-| Nightly job (21:30 IST) | Applies staged updates and writes the next sheet; group posting happens only in legacy Baileys mode |
-| Staff says `Bot, …` / `Flower Bot,` / `BMF,` | Bot answers in the group |
-| Staff says `Bot, send sheet` | On-demand sheet (applies pending updates first) |
+| Any staff message in the Updates group | Stored for the nightly run; the bot never replies |
+| Nightly job (21:30 IST) | Applies stored updates and writes the next sheet for the console; nothing is posted to the group |
+| Staff says `Bot, …` / `Bot, send sheet` | Stored for the record, **not answered** — ask questions and download the sheet in the console |
 | Personal DMs of the sheet | **Off** (`OWNER_SHEET_DM=0`) |
+
+The bot is a **silent listener** (`GROUP_SILENT=1`, the default). The console
+banner shows how long ago the last group message arrived, and warns when the
+WhatsApp link is down — paste staff updates on Overview until it is back.
 
 To keep the existing group, set `BUSINESS_TRANSPORT=baileys` and
 `UPDATES_GROUP_JID=<group JID>`, then scan the QR on `/link`. Dashboard paste/apply
 still works as a fallback. `OWNER_SHEET_DM=1` re-enables personal sheet DMs (not
-recommended). `GROUP_SHEET_SEND=0` stops nightly group uploads.
+recommended). Group posting (`GROUP_SHEET_SEND`, `GROUP_NIGHTLY_SUMMARY`, `Bot,`
+replies) only works with `GROUP_SILENT=0`, which is not recommended.
 
 ## Switch business phone later (only if using legacy WhatsApp mode)
 

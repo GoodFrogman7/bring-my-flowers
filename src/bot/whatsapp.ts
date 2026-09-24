@@ -13,6 +13,7 @@ import * as path from 'path';
 import logger from '../utils/logger';
 import { Boom } from '@hapi/boom';
 import { MessageSender } from './messageSender';
+import { groupSendBlocked } from './groupSilence';
 
 export interface IncomingGroupMessageMetadata {
   externalMessageId?: string;
@@ -397,6 +398,10 @@ export class WhatsAppBot implements MessageSender {
   }
 
   async sendMessage(to: string, message: string): Promise<boolean> {
+    if (groupSendBlocked(to)) {
+      logger.info({ to }, 'Group send blocked — GROUP_SILENT is on');
+      return false;
+    }
     if (!this.sock || !this.connected) {
       logger.error({ to }, 'Cannot send message: Not connected');
       return false;
@@ -414,6 +419,10 @@ export class WhatsAppBot implements MessageSender {
   }
 
   async sendDocument(to: string, filePath: string, caption?: string): Promise<boolean> {
+    if (groupSendBlocked(to)) {
+      logger.info({ to, filePath }, 'Group document send blocked — GROUP_SILENT is on');
+      return false;
+    }
     if (!this.sock || !this.connected) {
       logger.error({ to, filePath }, 'Cannot send document: Not connected');
       return false;

@@ -161,7 +161,7 @@ npm run make:release
 - Dashboard: **http://localhost:8787** (Overview is the daily home)
 - Full handoff: [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)
 - `OWNER_SHEET_DM=1` only if you intentionally want nightly WhatsApp DMs to owner numbers
-- `GROUP_SHEET_SEND=0` stops nightly group sheet upload
+- The bot never posts in the WhatsApp group (`GROUP_SILENT=1`, the default); it only listens
 - Set `DASHBOARD_PORT=0` to disable the dashboard
 
 More docs: [docs/SETUP.md](docs/SETUP.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) · [docs/OWNER-CONSOLE.md](docs/OWNER-CONSOLE.md)

@@ -15,11 +15,15 @@ import { buildProcurement, loadFlowers } from './assignment';
 import { renewalsDue } from './paymentRun';
 import { todayIST, addDays } from './dates';
 import { LLMProvider } from '../llm/provider';
+import { groupSilentEnabled } from '../bot/groupSilence';
 import { answerQuestion, answerWithLocalTools } from './qaAgent';
 import logger from '../utils/logger';
 
 /**
  * Live layer over the "Updates" group, on top of the nightly ingestion:
+ *
+ * With GROUP_SILENT on (the default) the bot never posts: every message is
+ * stored, and bot calls are recorded but not answered. With it off:
  *
  *   "Bot, <question>"  → answered immediately from the datastore
  *   "Bot, send sheet"  → pending updates applied, sheet sent to the group
@@ -275,6 +279,17 @@ export class GroupAssistant {
         metadata.receivedAt ?? new Date().toISOString(),
         metadata
       );
+      return;
+    }
+
+    if (groupSilentEnabled()) {
+      // Silent listener: keep the message for the record, never reply. It is
+      // marked processed immediately so "Bot, …" asks don't land in Review;
+      // questions are answered in the owner console instead.
+      const receivedAt = metadata.receivedAt ?? new Date().toISOString();
+      const id = insertGroupMessage(db, participant, text.trim(), receivedAt, metadata);
+      db.prepare(`UPDATE group_messages SET processed_at = ? WHERE id = ?`).run(receivedAt, id);
+      logger.info({ participant, route: route.kind }, 'Group bot call stored without reply — GROUP_SILENT is on');
       return;
     }
 

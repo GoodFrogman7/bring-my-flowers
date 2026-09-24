@@ -1,0 +1,173 @@
+{
+  "about": "Anonymized Updates-group messages labelled with the plan's taxonomy. Names, phones and addresses are fictional; the wording and shape mirror real 2026-09-23 messages. Labels are Claude drafts until 'verified' is true (Satyansh verifies before they count). 'mustNotMutate' marks messages the plan says always need a human tap.",
+  "today": "2026-09-23",
+  "customers": [
+    {
+      "id": "9001",
+      "name": "Meera Kapoor",
+      "phones": "9000000001",
+      "package": "Bliss",
+      "pack": 1450,
+      "day": "Friday",
+      "frequency": "WEEKLY",
+      "day2": ""
+    },
+    {
+      "id": "9002",
+      "name": "Anita Rao",
+      "phones": "9000000002",
+      "package": "Joy",
+      "pack": 1950,
+      "day": "Thursday",
+      "frequency": "WEEKLY",
+      "day2": ""
+    },
+    {
+      "id": "9003",
+      "name": "Vikram Shah",
+      "phones": "9000000003",
+      "package": "Bliss",
+      "pack": 1450,
+      "day": "Saturday",
+      "frequency": "WEEKLY",
+      "day2": ""
+    },
+    {
+      "id": "9004",
+      "name": "Rohan Mehta",
+      "phones": "9000000004",
+      "package": "Delight",
+      "pack": 999,
+      "day": "Thursday",
+      "frequency": "WEEKLY",
+      "day2": ""
+    },
+    {
+      "id": "9005",
+      "name": "Isha Malhotra",
+      "phones": "9000000005",
+      "package": "Bliss",
+      "pack": 1450,
+      "day": "Saturday",
+      "frequency": "BIWEEKLY",
+      "day2": "Tuesday"
+    }
+  ],
+  "messages": [
+    {
+      "id": "c01",
+      "text": "Online order- pls send in the morning slot before 11:30 only",
+      "replyTo": "an earlier one-off order message",
+      "type": "SLOT_CONSTRAINT",
+      "expected": {
+        "action": "Set time slot 'before 11:30' on the order it replies to"
+      },
+      "mustNotMutate": false,
+      "verified": false
+    },
+    {
+      "id": "c02",
+      "text": "Subscription payment updated\n16,17 and 18th\n21, 22 and 23rd",
+      "type": "PAYMENT_RECORD",
+      "expected": {
+        "action": "Payments recorded for subscriptions delivered on those dates — exact meaning unconfirmed; human confirms"
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c03",
+      "text": "HOld Meera Kapoor",
+      "type": "HOLD_OPEN",
+      "expected": {
+        "action": "Hold Meera Kapoor — open-ended or one day is unconfirmed",
+        "customer": "9001"
+      },
+      "mustNotMutate": false,
+      "verified": false
+    },
+    {
+      "id": "c04",
+      "text": "Hdtnp\nAnita Rao - kal inka call mat uthana pls\nVikram Shah - mujhse check kar ke bhejna",
+      "type": "HOLD_UNTIL_PAID",
+      "expected": {
+        "action": "Anita Rao and Vikram Shah: HOLD – confirm payment on the sheet, staff notes carried into remarks",
+        "customers": [
+          "9002",
+          "9003"
+        ]
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c05",
+      "text": "Ensure collection\nAnita Rao - yeh cash dengi\nRohan Mehta - no delivery if no payment",
+      "type": "COLLECTION_LIST",
+      "expected": {
+        "action": "Set collect flag and amount due on Anita Rao and Rohan Mehta rows; never mark anything paid",
+        "customers": [
+          "9002",
+          "9004"
+        ]
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c06",
+      "text": "Kavya Nair\nStart with Bliss\nSunday",
+      "type": "NEW_SUBSCRIPTION",
+      "expected": {
+        "action": "New subscription: Kavya Nair, Bliss, starting Sunday 2026-09-27"
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c07",
+      "text": "Send today from Pooja Batra\n14 yellow spray daisies in tissue wrap\nAmount 1600 received\nto\nRecipient's Name - Neha Arora\nNumber - 9000000007\nAddress - B-12, Sample Residency, Sector 50\nMessage: Happy birthday!",
+      "type": "ONE_OFF_ORDER",
+      "expected": {
+        "action": "Paid one-off order today: ₹1600 received, sender Pooja Batra, recipient Neha Arora 9000000007, card 'Happy birthday!'",
+        "amount": 1600,
+        "paid": true
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c08",
+      "text": "Arjun Sethi\nStart with Bliss from Friday",
+      "type": "NEW_SUBSCRIPTION",
+      "expected": {
+        "action": "New subscription: Arjun Sethi, Bliss, starting Friday 2026-09-25"
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c09",
+      "text": "Send today\n3 pink and 3 white spray daisies with greens to\nTanvi Gupta\nPlease deliver to C-4, Test Towers, Sector 56\n9000000009\ncollect 600",
+      "type": "ONE_OFF_ORDER",
+      "expected": {
+        "action": "One-off order today, cash on delivery ₹600, recipient Tanvi Gupta, address without the 'Please deliver to' prefix",
+        "amount": 600,
+        "paid": false
+      },
+      "mustNotMutate": true,
+      "verified": false
+    },
+    {
+      "id": "c10",
+      "text": "Isha Malhotra\nNeed to pause the delivery\n26th Sept\n29th Sept\nPlease start on 3rd Oct",
+      "type": "PAUSE_DATES",
+      "expected": {
+        "action": "Skip Isha Malhotra's deliveries on 2026-09-26 and 2026-09-29, resume 2026-10-03",
+        "customer": "9005"
+      },
+      "mustNotMutate": false,
+      "verified": false
+    }
+  ]
+}

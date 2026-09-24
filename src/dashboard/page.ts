@@ -452,13 +452,13 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <div>
           <div class="panel settings-block" id="input-help-block">
             <h3 id="settings-how-title">How the WhatsApp bot works</h3>
-            <p id="settings-how-copy">Listens only in the <strong>Updates</strong> group. Personal chats ignored.</p>
+            <p id="settings-how-copy">Listens silently in the <strong>Updates</strong> group. Personal chats ignored.</p>
             <ul id="settings-how-list">
-              <li>Staff posts are <strong>staged</strong> and applied overnight — no reply needed.</li>
-              <li>Call the bot: <code>Bot,</code> / <code>Flower Bot,</code> / <code>BMF,</code> + question.</li>
-              <li>Sheet in WhatsApp: <code>Bot, send sheet</code> only.</li>
+              <li>Staff posts are <strong>stored</strong> and applied at the nightly run — the bot never replies in the group.</li>
+              <li>Ask questions here in the console, not in the group.</li>
+              <li>Download tomorrow's sheet from this console.</li>
             </ul>
-            <div class="callout" id="settings-how-callout">Nightly run posts the sheet to the Updates group and saves a copy here. Personal owner DMs stay off (OWNER_SHEET_DM=0).</div>
+            <div class="callout" id="settings-how-callout">Nothing is posted to the Updates group (GROUP_SILENT=1). Personal owner DMs stay off (OWNER_SHEET_DM=0).</div>
           </div>
           <div class="panel settings-block">
             <h3>Owner questions (read-only)</h3>
@@ -625,6 +625,15 @@ function zoneBars(byZone, dark) {
   ).join('');
 }
 
+function agoText(iso) {
+  if (!iso) return 'no group messages received yet';
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 60) return 'last group message received ' + minutes + ' minute' + (minutes === 1 ? '' : 's') + ' ago';
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return 'last group message received ' + hours + ' hour' + (hours === 1 ? '' : 's') + ' ago';
+  return 'last group message received ' + Math.round(hours / 24) + ' days ago';
+}
+
 function applyHealth(health) {
   const banner = el('status-banner');
   const waPill = el('pill-wa');
@@ -657,17 +666,21 @@ function applyHealth(health) {
     }
   }
   if (!health) { banner.style.display = 'none'; return; }
+  const lastSeen = agoText(health.lastGroupMessageAt);
   if (health.whatsappConnected && health.linked && health.updatesGroupConfigured) {
     banner.className = 'ok'; banner.style.display = 'block';
-    banner.textContent = 'All systems online · Sheets on dashboard + Updates group nightly · No personal DMs';
+    banner.textContent = 'WhatsApp listening · ' + lastSeen + ' · ' +
+      (health.groupSilent ? 'Bot is silent in the group' : 'Bot may post in the group (GROUP_SILENT=0)');
     return;
   }
   banner.className = ''; banner.style.display = 'block';
   const parts = [];
   if (!health.linked) parts.push('WhatsApp not linked — open Settings');
-  else if (!health.whatsappConnected) parts.push('WhatsApp reconnecting…');
+  else if (!health.whatsappConnected) parts.push('WhatsApp link is down');
   if (!health.updatesGroupConfigured) parts.push('UPDATES_GROUP_JID missing');
-  banner.innerHTML = parts.join(' · ');
+  parts.push(lastSeen);
+  parts.push('Paste staff updates on Overview until it is back');
+  banner.textContent = parts.join(' · ');
 }
 
 function renderPulse(data) {

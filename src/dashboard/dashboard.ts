@@ -19,6 +19,7 @@ import {
   groupSheetSendEnabled,
   ownerSheetDmEnabled
 } from '../scheduler/groupUpdates';
+import { groupSilentEnabled } from '../bot/groupSilence';
 import logger from '../utils/logger';
 
 /**
@@ -136,6 +137,11 @@ export function startDashboard(options: DashboardOptions): http.Server {
     const linked = wa?.linked ?? fs.existsSync(path.join(sessionPath, 'creds.json'));
     const connected = wa?.connected ?? false;
     const groupConfigured = Boolean(options.updatesGroupJid || wa?.updatesGroupJid);
+    // Pasted updates are stored with participant 'dashboard'; everything else
+    // arrived from the WhatsApp group.
+    const lastGroup = db.prepare(`
+      SELECT MAX(received_at) AS at FROM group_messages WHERE participant <> 'dashboard'
+    `).get() as { at: string | null };
     return {
       ok: !whatsappRequired || (connected && linked && groupConfigured),
       inputMode,
@@ -153,7 +159,9 @@ export function startDashboard(options: DashboardOptions): http.Server {
       qaMode: options.qaMode ?? 'Local tools',
       ownerSheetDm: ownerSheetDmEnabled(),
       groupSheetSend: groupSheetSendEnabled(),
-      groupNightlySummary: groupNightlySummaryEnabled()
+      groupNightlySummary: groupNightlySummaryEnabled(),
+      groupSilent: groupSilentEnabled(),
+      lastGroupMessageAt: lastGroup.at || null
     };
   };
 

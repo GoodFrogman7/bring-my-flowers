@@ -71,6 +71,11 @@ groups; see [Business group chats](https://faq.whatsapp.com/1168258858576291).
 - The nightly job still runs without WhatsApp and writes the next-day sheet.
 - Baileys remains available only when an owner deliberately sets
   `BUSINESS_TRANSPORT=baileys` and `UPDATES_GROUP_JID`.
+- When Baileys is on, the bot is a **silent listener** (`GROUP_SILENT=1`, the
+  default since 2026-09-23). It stores every Updates-group message but posts
+  nothing to any group: no nightly sheet, no summary, no `Bot,` replies. The
+  Baileys transport itself refuses group sends while this is on, so no code
+  path can post by accident. Questions move to the owner console.
 
 ## Uncle's daily workflow
 
