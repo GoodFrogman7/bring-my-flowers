@@ -32,3 +32,8 @@ data/*.lock
 # Local runtime state and machine-local Claude settings
 sandbox/
 .claude/settings.local.json
+
+# Phase 1 evidence built from real data stays on the machine that has it
+reports/accuracy-baseline*.md
+reports/*.csv
+reports/compare/

@@ -144,3 +144,24 @@ AI-driven mutation yet.
   when the WhatsApp link is down, says to paste updates on Overview instead.
 - Tests no longer write to `./data`; they use temporary directories.
 - Vitest: 26 files, 360 tests passed.
+
+## 2026-09-24: Phase 1 evidence harness (tooling only, no real data yet)
+
+- `scripts/evidence/`: message export (IST, masked senders), attribution of
+  sheet differences to the plan's six causes, and the `accuracy-baseline.md`
+  report builder on top of `scripts/compare-del-sheets.ts`. All read-only;
+  all refuse the live database.
+- Anonymized corpus of the ten example messages from the plan, probed through
+  the **full** `processGroupMessages` pipeline (`reports/message-probe.md`).
+  This corrects the plan's direct-function probe:
+  - 9 of 10 go to Review with no data change — including the "Ensure
+    collection" list and the "collect 600" order, which the direct probe
+    suggested could be misread as payments. Nothing touched money.
+  - 1 of 10 is applied: "HOld <name>" puts the subscription on HOLD
+    **till further notice**, not a one-day skip. Whether staff mean
+    open-ended or one day is still an open decision; today the pipeline
+    already applies the open-ended reading without asking.
+  - So the pipeline is safe but understands almost nothing: the gap is
+    UNPARSED/STUCK_IN_REVIEW, not dangerous misparsing.
+- The actual baseline still needs a copy of `business.db` and Amit's sheets
+  on the Windows machine (see docs/TESTING.md, "Accuracy evidence harness").
